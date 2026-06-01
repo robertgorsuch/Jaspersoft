@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Jaspersoft Studio JDBC Data Adapter for the PostGIS Tiger geocoder database.
+  Pair with report: tx_density_blockgroup_report.jrxml
+  Import:  File > Import > JasperReports > Data Adapter, OR drop this file into a
+           project folder in the Project/Repository Explorer.
+  Requires: PostgreSQL JDBC driver (org.postgresql.Driver) on the adapter classpath
+            (Data Adapter editor > "Driver Classpath" tab > add postgresql-*.jar).
+-->
+<jdbcDataAdapter class="net.sf.jasperreports.data.jdbc.JdbcDataAdapterImpl">
+    <name>postgis_34_sample</name>
+    <driver>org.postgresql.Driver</driver>
+    <url>jdbc:postgresql://localhost:5432/postgis_34_sample</url>
+    <username>postgres</username>
+    <password></password>
+    <savePassword>false</savePassword>
+    <transactionIsolation>TRANSACTION_NONE</transactionIsolation>
+    <autoCommit>true</autoCommit>
+    <readOnly>false</readOnly>
+    <serverAddress></serverAddress>
+    <database></database>
+</jdbcDataAdapter>

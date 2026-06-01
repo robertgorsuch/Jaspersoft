@@ -1,0 +1,11 @@
+# Compiled / generated artifacts (regenerable)
+*.class
+*.jasper
+
+# Large regenerable data exports (rebuild from the DB)
+output/
+
+# Notes:
+#  - JasperReports runtime (C:\Users\rgorsuch\jasperreports-lib) and source
+#    (C:\Users\rgorsuch\jasperreports-7.0.6) live outside this repo by design.
+#  - TIGER staging data lives in C:\gisdata (not tracked).

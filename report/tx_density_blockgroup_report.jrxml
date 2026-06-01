@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Texas Population Density by Census Block Group (2020)
+  Report based on tx_density_choropleth_blockgroup.html.
+  Reproduces the choropleth's density classification (people/km2) as a grouped,
+  printable report. Run against a JDBC connection to the PostgreSQL database
+  'postgis_34_sample' (PostGIS Tiger geocoder).
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="tx_density_blockgroup_report" pageWidth="595" pageHeight="842"
+              columnWidth="555" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+	<property name="ireport.zoom" value="1.0"/>
+	<property name="ireport.x" value="0"/>
+	<property name="ireport.y" value="0"/>
+
+	<queryString language="SQL">
+		<![CDATA[
+WITH bgpop AS (
+  SELECT b.geoid, b.statefp, b.countyfp, b.aland, COALESCE(a.pop,0) AS pop
+  FROM tiger_data.tx_bg b
+  LEFT JOIN (
+    SELECT statefp||countyfp||tractce||left(blockce,1) AS bg, sum(pop) AS pop
+    FROM tiger_data.tx_tabblock20 GROUP BY 1
+  ) a ON a.bg = b.geoid
+),
+classed AS (
+  SELECT geoid, statefp, countyfp, pop,
+         round((aland/1e6)::numeric,3) AS area_km2,
+         CASE WHEN aland>0 THEN pop/(aland/1e6) ELSE 0 END AS dens,
+         CASE
+           WHEN aland=0 OR pop=0       THEN '1. < 50'
+           WHEN pop/(aland/1e6) < 50   THEN '1. < 50'
+           WHEN pop/(aland/1e6) < 200  THEN '2. 50 - 200'
+           WHEN pop/(aland/1e6) < 500  THEN '3. 200 - 500'
+           WHEN pop/(aland/1e6) < 1000 THEN '4. 500 - 1,000'
+           WHEN pop/(aland/1e6) < 2000 THEN '5. 1,000 - 2,000'
+           WHEN pop/(aland/1e6) < 4000 THEN '6. 2,000 - 4,000'
+           WHEN pop/(aland/1e6) < 8000 THEN '7. 4,000 - 8,000'
+           ELSE '8. 8,000+'
+         END AS density_class
+  FROM bgpop
+)
+SELECT
+  COALESCE(c.name,'(unknown)')                            AS county,
+  l.geoid                                                 AS block_group,
+  l.pop::bigint                                           AS population,
+  l.area_km2                                              AS area_km2,
+  round(l.dens::numeric,1)                                AS density,
+  l.density_class                                         AS density_class,
+  count(*)   over (partition by l.density_class)::int     AS class_bg_count,
+  sum(l.pop) over (partition by l.density_class)::bigint  AS class_pop,
+  round((100.0 * sum(l.pop) over (partition by l.density_class)
+        / NULLIF(sum(l.pop) over (),0))::numeric,1)        AS class_pct
+FROM classed l
+LEFT JOIN tiger.county c ON c.statefp=l.statefp AND c.countyfp=l.countyfp
+ORDER BY l.density_class, county, l.geoid
+		]]>
+	</queryString>
+
+	<field name="county" class="java.lang.String"/>
+	<field name="block_group" class="java.lang.String"/>
+	<field name="population" class="java.lang.Long"/>
+	<field name="area_km2" class="java.math.BigDecimal"/>
+	<field name="density" class="java.math.BigDecimal"/>
+	<field name="density_class" class="java.lang.String"/>
+	<field name="class_bg_count" class="java.lang.Integer"/>
+	<field name="class_pop" class="java.lang.Long"/>
+	<field name="class_pct" class="java.math.BigDecimal"/>
+
+	<variable name="totPop" class="java.lang.Long" calculation="Sum">
+		<variableExpression><![CDATA[$F{population}]]></variableExpression>
+	</variable>
+	<variable name="totCount" class="java.lang.Integer" calculation="Count">
+		<variableExpression><![CDATA[$F{block_group}]]></variableExpression>
+	</variable>
+
+	<group name="DensityClass">
+		<groupExpression><![CDATA[$F{density_class}]]></groupExpression>
+		<groupHeader>
+			<band height="24">
+				<rectangle>
+					<reportElement mode="Opaque" x="0" y="3" width="555" height="18" backcolor="#EFEFEF"/>
+					<graphicElement>
+						<pen lineWidth="0.0"/>
+					</graphicElement>
+				</rectangle>
+				<textField>
+					<reportElement x="6" y="3" width="230" height="18"/>
+					<textElement verticalAlignment="Middle">
+						<font size="11" isBold="true"/>
+					</textElement>
+					<textFieldExpression class="java.lang.String"><![CDATA[$F{density_class} + "  people/km²"]]></textFieldExpression>
+				</textField>
+				<textField>
+					<reportElement x="236" y="3" width="319" height="18"/>
+					<textElement verticalAlignment="Middle" textAlignment="Right">
+						<font size="9"/>
+					</textElement>
+					<textFieldExpression class="java.lang.String"><![CDATA[
+						java.text.NumberFormat.getIntegerInstance().format($F{class_bg_count}) + " block groups   |   "
+						+ java.text.NumberFormat.getIntegerInstance().format($F{class_pop}) + " people   |   "
+						+ $F{class_pct} + "% of state   "]]></textFieldExpression>
+				</textField>
+			</band>
+		</groupHeader>
+		<groupFooter>
+			<band height="6">
+				<line>
+					<reportElement x="0" y="1" width="555" height="1" forecolor="#CCCCCC"/>
+				</line>
+			</band>
+		</groupFooter>
+	</group>
+
+	<title>
+		<band height="208">
+			<textField>
+				<reportElement x="0" y="0" width="555" height="26"/>
+				<textElement><font size="17" isBold="true"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA["Texas Population Density by Census Block Group"]]></textFieldExpression>
+			</textField>
+			<staticText>
+				<reportElement x="0" y="28" width="555" height="15"/>
+				<textElement><font size="10"/></textElement>
+				<text><![CDATA[2020 Census - TIGER/Line block groups, classified by population density (people per km2)]]></text>
+			</staticText>
+			<staticText>
+				<reportElement x="0" y="44" width="555" height="12" forecolor="#666666"/>
+				<textElement><font size="7.5"/></textElement>
+				<text><![CDATA[Source: PostgreSQL postgis_34_sample - tiger_data.tx_bg joined to block-summed population from tiger_data.tx_tabblock20. Based on tx_density_choropleth_blockgroup.html.]]></text>
+			</staticText>
+			<staticText>
+				<reportElement x="0" y="66" width="300" height="14"/>
+				<textElement><font size="10" isBold="true"/></textElement>
+				<text><![CDATA[Density classes (people / km2)]]></text>
+			</staticText>
+			<!-- Legend swatches: colors match the choropleth's YlOrRd ramp -->
+			<rectangle><reportElement mode="Opaque" x="0" y="84"  width="16" height="11" backcolor="#FFEDA0"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="20" y="84" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[< 50]]></text></staticText>
+			<rectangle><reportElement mode="Opaque" x="0" y="98"  width="16" height="11" backcolor="#FED976"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="20" y="98" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[50 - 200]]></text></staticText>
+			<rectangle><reportElement mode="Opaque" x="0" y="112" width="16" height="11" backcolor="#FEB24C"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="20" y="112" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[200 - 500]]></text></staticText>
+			<rectangle><reportElement mode="Opaque" x="0" y="126" width="16" height="11" backcolor="#FD8D3C"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="20" y="126" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[500 - 1,000]]></text></staticText>
+			<rectangle><reportElement mode="Opaque" x="280" y="84"  width="16" height="11" backcolor="#FC4E2A"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="300" y="84" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[1,000 - 2,000]]></text></staticText>
+			<rectangle><reportElement mode="Opaque" x="280" y="98"  width="16" height="11" backcolor="#E31A1C"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="300" y="98" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[2,000 - 4,000]]></text></staticText>
+			<rectangle><reportElement mode="Opaque" x="280" y="112" width="16" height="11" backcolor="#BD0026"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="300" y="112" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[4,000 - 8,000]]></text></staticText>
+			<rectangle><reportElement mode="Opaque" x="280" y="126" width="16" height="11" backcolor="#800026"/><graphicElement><pen lineWidth="0.25" lineColor="#999999"/></graphicElement></rectangle>
+			<staticText><reportElement x="300" y="126" width="200" height="11"/><textElement><font size="8"/></textElement><text><![CDATA[8,000 +]]></text></staticText>
+			<line><reportElement x="0" y="150" width="555" height="1" forecolor="#999999"/></line>
+			<textField>
+				<reportElement x="0" y="156" width="555" height="14"/>
+				<textElement><font size="9" isItalic="true"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA["Generated " + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(new java.util.Date())]]></textFieldExpression>
+			</textField>
+		</band>
+	</title>
+
+	<columnHeader>
+		<band height="18">
+			<rectangle>
+				<reportElement mode="Opaque" x="0" y="0" width="555" height="18" backcolor="#34495E"/>
+				<graphicElement><pen lineWidth="0.0"/></graphicElement>
+			</rectangle>
+			<staticText><reportElement x="6" y="0" width="194" height="18" forecolor="#FFFFFF"/><textElement verticalAlignment="Middle"><font size="9" isBold="true"/></textElement><text><![CDATA[County]]></text></staticText>
+			<staticText><reportElement x="200" y="0" width="100" height="18" forecolor="#FFFFFF"/><textElement verticalAlignment="Middle"><font size="9" isBold="true"/></textElement><text><![CDATA[Block Group]]></text></staticText>
+			<staticText><reportElement x="300" y="0" width="80" height="18" forecolor="#FFFFFF"/><textElement verticalAlignment="Middle" textAlignment="Right"><font size="9" isBold="true"/></textElement><text><![CDATA[Population]]></text></staticText>
+			<staticText><reportElement x="380" y="0" width="80" height="18" forecolor="#FFFFFF"/><textElement verticalAlignment="Middle" textAlignment="Right"><font size="9" isBold="true"/></textElement><text><![CDATA[Area (km2)]]></text></staticText>
+			<staticText><reportElement x="460" y="0" width="89" height="18" forecolor="#FFFFFF"/><textElement verticalAlignment="Middle" textAlignment="Right"><font size="9" isBold="true"/></textElement><text><![CDATA[Density /km2]]></text></staticText>
+		</band>
+	</columnHeader>
+
+	<detail>
+		<band height="13">
+			<textField>
+				<reportElement x="6" y="0" width="194" height="13"/>
+				<textElement verticalAlignment="Middle"><font size="8"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA[$F{county}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="200" y="0" width="100" height="13"/>
+				<textElement verticalAlignment="Middle"><font size="8"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA[$F{block_group}]]></textFieldExpression>
+			</textField>
+			<textField pattern="#,##0">
+				<reportElement x="300" y="0" width="80" height="13"/>
+				<textElement verticalAlignment="Middle" textAlignment="Right"><font size="8"/></textElement>
+				<textFieldExpression class="java.lang.Long"><![CDATA[$F{population}]]></textFieldExpression>
+			</textField>
+			<textField pattern="#,##0.000">
+				<reportElement x="380" y="0" width="80" height="13"/>
+				<textElement verticalAlignment="Middle" textAlignment="Right"><font size="8"/></textElement>
+				<textFieldExpression class="java.math.BigDecimal"><![CDATA[$F{area_km2}]]></textFieldExpression>
+			</textField>
+			<textField pattern="#,##0.0">
+				<reportElement x="460" y="0" width="89" height="13"/>
+				<textElement verticalAlignment="Middle" textAlignment="Right"><font size="8"/></textElement>
+				<textFieldExpression class="java.math.BigDecimal"><![CDATA[$F{density}]]></textFieldExpression>
+			</textField>
+			<line><reportElement x="0" y="12" width="555" height="1" forecolor="#EEEEEE"/></line>
+		</band>
+	</detail>
+
+	<pageFooter>
+		<band height="16">
+			<textField>
+				<reportElement x="0" y="2" width="277" height="12" forecolor="#666666"/>
+				<textElement><font size="8"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA["Texas Population Density - Block Group Report"]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Now">
+				<reportElement x="400" y="2" width="120" height="12" forecolor="#666666"/>
+				<textElement textAlignment="Right"><font size="8"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA["Page " + $V{PAGE_NUMBER} + " of"]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Report">
+				<reportElement x="522" y="2" width="33" height="12" forecolor="#666666"/>
+				<textElement textAlignment="Left"><font size="8"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA[" " + $V{PAGE_NUMBER}]]></textFieldExpression>
+			</textField>
+		</band>
+	</pageFooter>
+
+	<summary>
+		<band height="46">
+			<line><reportElement x="0" y="2" width="555" height="1" forecolor="#34495E"/></line>
+			<staticText>
+				<reportElement x="6" y="8" width="200" height="16"/>
+				<textElement><font size="11" isBold="true"/></textElement>
+				<text><![CDATA[Statewide total]]></text>
+			</staticText>
+			<textField>
+				<reportElement x="206" y="8" width="343" height="16"/>
+				<textElement textAlignment="Right"><font size="11" isBold="true"/></textElement>
+				<textFieldExpression class="java.lang.String"><![CDATA[
+					java.text.NumberFormat.getIntegerInstance().format($V{totCount}) + " block groups     "
+					+ java.text.NumberFormat.getIntegerInstance().format($V{totPop}) + " people"]]></textFieldExpression>
+			</textField>
+			<staticText>
+				<reportElement x="6" y="26" width="543" height="14" forecolor="#666666"/>
+				<textElement><font size="8" isItalic="true"/></textElement>
+				<text><![CDATA[Density = block-group population / land area (km2). Classes match the choropleth legend. Block groups are the finest census polygon practical for full-state reporting (block level = ~449k polygons).]]></text>
+			</staticText>
+		</band>
+	</summary>
+
+</jasperReport>
