@@ -1,0 +1,6 @@
+{
+  "serverUrl": "http://localhost:8081/jasperserver-pro",
+  "user": "superuser",
+  "password": "CHANGE_ME",
+  "dataSourceUri": "/datasources/postgis_34_sample"
+}
