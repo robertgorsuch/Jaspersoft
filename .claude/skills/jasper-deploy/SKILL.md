@@ -128,12 +128,25 @@ java --class-path "C:\Users\rgorsuch\jasperreports-lib\*" `
   A leading `WITH` (CTE) is rejected at fill time with a `JSSecurityException`
   (`Validator.validateSQL`) surfaced as a generic `400`/error UID — rewrite CTEs
   as nested subqueries. Window functions (`... over ()`) are fine.
-- **Charts**: the JR7 runtime lib now includes `jasperreports-charts-7.0.6.jar`
-  + `jfreechart-1.5.6.jar` (built from `ext/charts`), so chart reports compile
-  locally. JR7 pie syntax: `<element kind="chart" chartType="pie">` →
+- **Charts**: the JR7 runtime lib includes `jasperreports-charts-7.0.6.jar`
+  + `jfreechart-1.5.6.jar`, so chart reports compile locally. JR7 pie syntax:
+  `<element kind="chart" chartType="pie">` →
   `<dataset kind="pie"><series><keyExpression/><valueExpression/></series></dataset>`
   then `<plot labelFormat="{0}: {2}"/>` ({0}=key, {1}=value, {2}=percentage).
   Working example: `..\..\report\metro_population_piechart.jrxml`.
+  - **Rebuilding the chart jars** (those two jars live in
+    `C:\Users\rgorsuch\jasperreports-lib`, outside this repo — a fresh clone on
+    another machine must rebuild them from the JR7 source before chart reports
+    will compile locally; the server already has charts):
+    ```powershell
+    $env:JAVA_HOME = "C:\jdk-11.0.24+8"
+    & "C:\apache-maven-3.9.9\bin\mvn.cmd" -f "C:\Users\rgorsuch\jasperreports-7.0.6\pom.xml" `
+        -pl ext/charts -am --% -Dmaven.test.skip=true package
+    ```
+    Then copy `ext\charts\target\jasperreports-charts-7.0.6.jar` and
+    `~\.m2\repository\org\jfree\jfreechart\1.5.6\jfreechart-1.5.6.jar` into
+    `C:\Users\rgorsuch\jasperreports-lib`. (JFreeChart 1.5.x bundles jcommon, so
+    no separate jcommon jar is needed.)
 - In PowerShell, pass Maven/Java `-D...` args after `--%` if you script the
   underlying tools directly.
 - Field `class` must match the JDBC column type or fill fails — the scaffolder
