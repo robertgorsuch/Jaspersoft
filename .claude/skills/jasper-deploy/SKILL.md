@@ -164,16 +164,23 @@ resource (REST v2) — CSV/image/font/properties referenced by reports:
 Verified: the file uploads and is retrievable at its repo URI, byte-intact.
 
 **CSV-backed reports** reference a CSV via a `.jrdax` data adapter (a
-`<csvDataAdapter>` with `fileName`, `columnNames`, `recordDelimiter`,
-`queryExecuterMode`) pointed at the uploaded file (`fileName` =
-`repo:/path` or relative), and the report carries a
-`net.sf.jasperreports.data.adapter` property naming the adapter.
-**Status/caveat:** wiring the JR Library CSV samples (e.g. `csvdatasource`,
-`chartthemes`) this way over REST proved unreliable — the adapter chain resolves
-(per server stack traces) but reports can render 0 rows with no error, due to
-query-executer-vs-datasource-mode and delimiter subtleties. The dependable path
-is to build + test-preview the CSV data adapter in **Jaspersoft Studio** and
-publish it to JRS, then deploy the report referencing it.
+`<csvDataAdapter>` with `fileName`=`repo:/path`, `useFirstRowAsHeader` or
+explicit `columnNames`, `recordDelimiter` (CRLF=`&#13;&#10;`, preserved by JRS),
+`fieldDelimiter`, `datePattern`, `queryExecuterMode`). Set the adapter on the
+relevant `<dataset>`/subDataset with a `net.sf.jasperreports.data.adapter`
+property (= the adapter's `repo:` URI) and remove any `dataSourceExpression`.
+Upload the CSV and the `.jrdax` with `upload_file.ps1`; deploy companion
+resources (resource bundles, images) embedded in the report unit with
+`deploy_report.ps1 -ResourceFiles "name=path"`.
+**Verified:** the `chartthemes` AllChartsReport (5 CSVs via subdataset adapters)
+renders all chart themes this way. Two gotchas that cause a silent 0-row or a
+fill error: (1) **strip the UTF-8 BOM** from the CSV — it trips the parser with
+"Misplaced quote"; (2) a report with `resourceBundle="X"` needs the `.properties`
+bundle embedded (`-ResourceFiles "X.properties=..."`) even with
+`whenResourceMissingType="Key"` (that only covers missing keys, not a missing
+bundle). The single-CSV *query-executer* report (`csvdatasource`) is a harder
+case — its empty `<query language="csv">` binds 0 rows via an adapter; build that
+one in Jaspersoft Studio.
 
 ## Notes / gotchas
 - The live server is `jasperserver-pro` on **port 8081** (HTTP Basic). Port 8080

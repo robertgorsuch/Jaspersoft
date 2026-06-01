@@ -39,6 +39,7 @@ param(
     [string]$Label,
     [string]$Description = "",
     [string]$DataSourceUri,
+    [string[]]$ResourceFiles,   # companion resources: "name=localpath" (bundles, images, subreports)
     [switch]$Overwrite,
     [string]$ServerUrl,
     [string]$User,
@@ -92,6 +93,23 @@ if ($DataSourceUri) {
     $desc.dataSource = [ordered]@{ dataSourceReference = [ordered]@{ uri = $DataSourceUri } }
 } else {
     Write-Warning "No datasource specified; report unit will be created but won't run until one is attached."
+}
+
+# optional companion resources embedded in the report unit (resource bundles,
+# images, subreport .jasper, etc.). -ResourceFiles entries are "name=localpath".
+if ($ResourceFiles) {
+    $extType = @{ ".properties"="prop"; ".png"="img"; ".gif"="img"; ".jpg"="img"; ".jpeg"="img";
+                  ".jrxml"="jrxml"; ".jasper"="jrxml"; ".ttf"="font"; ".xml"="xml" }
+    $list = @()
+    foreach ($rf in $ResourceFiles) {
+        $name, $path = $rf -split "=", 2
+        if (-not (Test-Path $path)) { throw "resource file not found: $path" }
+        $ext = [IO.Path]::GetExtension($path).ToLower()
+        $rtype = if ($extType.ContainsKey($ext)) { $extType[$ext] } else { "txt" }
+        $rb64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $path)))
+        $list += [ordered]@{ name = $name; file = [ordered]@{ fileResource = [ordered]@{ label = $name; type = $rtype; content = $rb64 } } }
+    }
+    $desc.resources = [ordered]@{ resource = $list }
 }
 
 $jsonFile = [IO.Path]::GetTempFileName()

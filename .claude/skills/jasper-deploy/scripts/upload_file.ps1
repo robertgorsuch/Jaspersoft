@@ -18,6 +18,7 @@ param(
     [Parameter(Mandatory)][string]$Uri,
     [string]$Type = "txt",
     [string]$Label,
+    [switch]$Overwrite,
     [string]$ServerUrl, [string]$User, [string]$Password
 )
 $ErrorActionPreference = "Stop"
@@ -34,6 +35,10 @@ $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $File)))
 $desc = [ordered]@{ label = $Label; type = $Type; content = $b64 }
 $json = [IO.Path]::GetTempFileName()
 ($desc | ConvertTo-Json) | Set-Content $json -Encoding utf8
+if ($Overwrite) {
+    $dc = & curl.exe -s -o "$env:TEMP\jrs_del.tmp" -w "%{http_code}" -u "${User}:${Password}" -X DELETE "$ServerUrl/rest_v2/resources$Uri"
+    Write-Host "overwrite: DELETE $Uri -> $dc"
+}
 $url = "$ServerUrl/rest_v2/resources$Uri" + "?createFolders=true"
 Write-Host "PUT $url (file type=$Type)"
 try {
