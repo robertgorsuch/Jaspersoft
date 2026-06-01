@@ -39,6 +39,7 @@ param(
     [string]$Label,
     [string]$Description = "",
     [string]$DataSourceUri,
+    [switch]$Overwrite,
     [string]$ServerUrl,
     [string]$User,
     [string]$Password
@@ -95,6 +96,15 @@ if ($DataSourceUri) {
 
 $jsonFile = [IO.Path]::GetTempFileName()
 ($desc | ConvertTo-Json -Depth 8) | Set-Content -Path $jsonFile -Encoding utf8
+
+# --- optional overwrite: delete existing resource first ------------------
+# JRS uses optimistic locking; re-PUTting over an existing report unit fails
+# with 409 "versions not match". -Overwrite deletes it first (ignores 404).
+if ($Overwrite) {
+    $delUrl = "$ServerUrl/rest_v2/resources$TargetUri"
+    $delCode = & curl.exe -s -o $null -w "%{http_code}" -u "${User}:${Password}" -X DELETE $delUrl
+    Write-Host "overwrite: DELETE $TargetUri -> $delCode"
+}
 
 # --- PUT to REST v2 -------------------------------------------------------
 $url = "$ServerUrl/rest_v2/resources$TargetUri" + "?createFolders=true"

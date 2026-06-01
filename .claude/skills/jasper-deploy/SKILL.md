@@ -110,14 +110,34 @@ curl.exe -s -u "${user}:${pass}" -o out.pdf `
     "http://localhost:8081/jasperserver-pro/rest_v2/reports/reports/geocoder/county_summary.pdf"
 ```
 A `200` and a `%PDF-` file confirm JRS compiled the jrxml, connected through the
-datasource, filled, and exported.
+datasource, filled, and exported. Re-deploying an existing report fails with
+`409 versions not match` (optimistic locking) — pass **`-Overwrite`** to
+`deploy_report.ps1` to delete-then-recreate.
+
+To **preview locally as an image** (handy for charts), fill + render a page to PNG:
+```powershell
+$env:PGPASSWORD = "postgres"
+java --class-path "C:\Users\rgorsuch\jasperreports-lib\*" `
+    report\RenderPng.java report\my_report.jasper out.png   # optional 3rd arg = page index
+```
 
 ## Notes / gotchas
 - The live server is `jasperserver-pro` on **port 8081** (HTTP Basic). Port 8080
   hosts an unrelated Bearer-token-gated Java service that 401s every path — not JRS.
+- **JRS SQL security validator**: report queries must begin with `SELECT`.
+  A leading `WITH` (CTE) is rejected at fill time with a `JSSecurityException`
+  (`Validator.validateSQL`) surfaced as a generic `400`/error UID — rewrite CTEs
+  as nested subqueries. Window functions (`... over ()`) are fine.
+- **Charts**: the JR7 runtime lib now includes `jasperreports-charts-7.0.6.jar`
+  + `jfreechart-1.5.6.jar` (built from `ext/charts`), so chart reports compile
+  locally. JR7 pie syntax: `<element kind="chart" chartType="pie">` →
+  `<dataset kind="pie"><series><keyExpression/><valueExpression/></series></dataset>`
+  then `<plot labelFormat="{0}: {2}"/>` ({0}=key, {1}=value, {2}=percentage).
+  Working example: `..\..\report\metro_population_piechart.jrxml`.
 - In PowerShell, pass Maven/Java `-D...` args after `--%` if you script the
   underlying tools directly.
 - Field `class` must match the JDBC column type or fill fails — the scaffolder
   handles this; if you hand-edit the SQL, keep `<field class>` in sync.
-- Reference report that is known to compile and render:
-  `..\..\report\tx_density_blockgroup_report_jr7.jrxml`.
+- Reference reports known to compile and render:
+  `..\..\report\tx_density_blockgroup_report_jr7.jrxml` (tabular + groups),
+  `..\..\report\metro_population_piechart.jrxml` (pie chart).
