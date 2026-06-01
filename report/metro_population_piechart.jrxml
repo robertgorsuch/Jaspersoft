@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Texas Population by Metropolitan Area - pie chart showing each metro's share
+  of total state population. JR7-native (JasperReports 7.0.6). Population summed
+  from tiger_data.tx_tabblock20 (2020 Census blocks), counties bucketed into
+  metros by FIPS. Fill against a JDBC connection to postgis_34_sample.
+-->
+<jasperReport name="metro_population_piechart" language="java" pageWidth="595" pageHeight="842" columnWidth="535" leftMargin="30" rightMargin="30" topMargin="30" bottomMargin="30">
+	<query language="SQL"><![CDATA[
+SELECT metro,
+       sum(pop)::bigint AS population,
+       round(100.0 * sum(pop) / sum(sum(pop)) over (), 1) AS pct
+FROM (
+  SELECT CASE
+    WHEN countyfp IN ('201','157','339','039','167','291','473','071','015') THEN 'Houston'
+    WHEN countyfp IN ('113','439','085','121','139','251','257','397','367','231','497','221','425') THEN 'Dallas-Fort Worth'
+    WHEN countyfp IN ('029','091','187','493','013','019','259','325') THEN 'San Antonio'
+    WHEN countyfp IN ('453','491','209','021','055') THEN 'Austin'
+    WHEN countyfp IN ('141','229') THEN 'El Paso'
+    WHEN countyfp IN ('215') THEN 'McAllen-Edinburg'
+    WHEN countyfp IN ('355','409','007') THEN 'Corpus Christi'
+    ELSE 'Rest of Texas'
+  END AS metro, pop
+  FROM (
+    SELECT countyfp, sum(pop)::bigint AS pop
+    FROM tiger_data.tx_tabblock20 GROUP BY countyfp
+  ) cp
+) m
+GROUP BY metro ORDER BY population DESC
+	]]></query>
+
+	<field name="metro" class="java.lang.String"/>
+	<field name="population" class="java.lang.Long"/>
+	<field name="pct" class="java.math.BigDecimal"/>
+
+	<variable name="totPop" class="java.lang.Long" calculation="Sum">
+		<expression><![CDATA[$F{population}]]></expression>
+	</variable>
+
+	<title height="54">
+		<element kind="staticText" x="0" y="0" width="535" height="26" fontSize="17.0" bold="true">
+			<text><![CDATA[Texas Population by Metropolitan Area]]></text>
+		</element>
+		<element kind="staticText" x="0" y="28" width="535" height="14" fontSize="9.0" forecolor="#666666">
+			<text><![CDATA[Each metro's share of total state population. 2020 Census blocks (tiger_data.tx_tabblock20), counties grouped into metros by FIPS.]]></text>
+		</element>
+	</title>
+
+	<columnHeader height="18">
+		<element kind="rectangle" x="0" y="0" width="535" height="18" mode="Opaque" backcolor="#34495E" forecolor="#34495E"/>
+		<element kind="staticText" x="6" y="0" width="300" height="18" forecolor="#FFFFFF" fontSize="9.0" bold="true" vTextAlign="Middle"><text><![CDATA[Metropolitan Area]]></text></element>
+		<element kind="staticText" x="306" y="0" width="130" height="18" forecolor="#FFFFFF" fontSize="9.0" bold="true" hTextAlign="Right" vTextAlign="Middle"><text><![CDATA[Population]]></text></element>
+		<element kind="staticText" x="436" y="0" width="93" height="18" forecolor="#FFFFFF" fontSize="9.0" bold="true" hTextAlign="Right" vTextAlign="Middle"><text><![CDATA[% of State]]></text></element>
+	</columnHeader>
+
+	<detail>
+		<band height="16">
+			<element kind="textField" x="6" y="0" width="300" height="16" fontSize="9.0" vTextAlign="Middle"><expression><![CDATA[$F{metro}]]></expression></element>
+			<element kind="textField" x="306" y="0" width="130" height="16" fontSize="9.0" hTextAlign="Right" vTextAlign="Middle" pattern="#,##0"><expression><![CDATA[$F{population}]]></expression></element>
+			<element kind="textField" x="436" y="0" width="93" height="16" fontSize="9.0" hTextAlign="Right" vTextAlign="Middle"><expression><![CDATA[$F{pct} + "%"]]></expression></element>
+			<element kind="line" x="0" y="15" width="535" height="1" forecolor="#EEEEEE"/>
+		</band>
+	</detail>
+
+	<summary height="360">
+		<element kind="textField" x="306" y="4" width="130" height="16" fontSize="9.0" bold="true" hTextAlign="Right"><expression><![CDATA[java.text.NumberFormat.getIntegerInstance().format($V{totPop})]]></expression></element>
+		<element kind="staticText" x="6" y="4" width="300" height="16" fontSize="9.0" bold="true"><text><![CDATA[Total state population]]></text></element>
+		<element kind="chart" chartType="pie" x="0" y="30" width="535" height="320" evaluationTime="Report">
+			<dataset kind="pie">
+				<series>
+					<keyExpression><![CDATA[$F{metro}]]></keyExpression>
+					<valueExpression><![CDATA[$F{population}]]></valueExpression>
+				</series>
+			</dataset>
+			<plot labelFormat="{0}: {2}" legendLabelFormat="{0} ({2})"/>
+		</element>
+	</summary>
+
+</jasperReport>
