@@ -155,6 +155,26 @@ run time (`...PieChartReport.pdf?MaxOrderID=11077`) or bake in defaults.
 they render with content from the JRS UI with no input. A `200`+valid-PDF only
 means it ran, not that it has content — spot-check pages.
 
+## File resources & CSV data adapters
+`scripts/upload_file.ps1` uploads any local file to JRS as a repository file
+resource (REST v2) — CSV/image/font/properties referenced by reports:
+```powershell
+& $skill\upload_file.ps1 -File data\foo.csv -Uri /reports/jr_samples/data/foo -Type csv
+```
+Verified: the file uploads and is retrievable at its repo URI, byte-intact.
+
+**CSV-backed reports** reference a CSV via a `.jrdax` data adapter (a
+`<csvDataAdapter>` with `fileName`, `columnNames`, `recordDelimiter`,
+`queryExecuterMode`) pointed at the uploaded file (`fileName` =
+`repo:/path` or relative), and the report carries a
+`net.sf.jasperreports.data.adapter` property naming the adapter.
+**Status/caveat:** wiring the JR Library CSV samples (e.g. `csvdatasource`,
+`chartthemes`) this way over REST proved unreliable — the adapter chain resolves
+(per server stack traces) but reports can render 0 rows with no error, due to
+query-executer-vs-datasource-mode and delimiter subtleties. The dependable path
+is to build + test-preview the CSV data adapter in **Jaspersoft Studio** and
+publish it to JRS, then deploy the report referencing it.
+
 ## Notes / gotchas
 - The live server is `jasperserver-pro` on **port 8081** (HTTP Basic). Port 8080
   hosts an unrelated Bearer-token-gated Java service that 401s every path — not JRS.
