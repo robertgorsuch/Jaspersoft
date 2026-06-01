@@ -26,15 +26,19 @@ param(
     [string]$CsvOut = "C:\Users\rgorsuch\tx-geocoder\output\jr_samples_results.csv",
     [switch]$IncludeQueryReports,   # also deploy (but not expect to run) query-based reports
     [string]$DataSourceUri,         # attach to query-based reports so they can run
-    [int]$Limit = 0                 # 0 = no limit
+    [int]$Limit = 0,                # 0 = no limit
+    [string]$ServerUrl, [string]$User, [string]$Password
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_jrs_common.ps1")
 $deploy = Join-Path $PSScriptRoot "deploy_report.ps1"
-$base = $null  # resolved lazily for the run step via jrs.config.json
-$cfg = Get-Content (Join-Path $PSScriptRoot "..\jrs.config.json") -Raw | ConvertFrom-Json
-$server = $cfg.serverUrl.TrimEnd("/")
-$cred = "$($cfg.user):$($cfg.password)"
+# one config resolution (param -> env -> jrs.config.json) used for BOTH the
+# deploy substep and the run-to-PDF step, so they can't disagree.
+$jrs = Resolve-JrsConfig -ServerUrl $ServerUrl -User $User -Password $Password
+$cred = "$($jrs.User):$($jrs.Password)"
+$logDir = Join-Path (Split-Path $CsvOut -Parent) "jr_samples_logs"
+New-Item -ItemType Directory -Force $logDir | Out-Null
 
 function Sanitize([string]$s) { return ($s -replace '[^A-Za-z0-9_]', '_') }
 
@@ -51,7 +55,7 @@ foreach ($f in $jrxmls) {
     $base = [IO.Path]::GetFileNameWithoutExtension($f.Name)
     $id = Sanitize("$sample`_$base")
     $uri = "$TargetRoot/$id"
-    $row = [ordered]@{ sample = $sample; report = $base; hasQuery = $hasQuery; uri = $uri; deploy = ""; run = "" }
+    $row = [ordered]@{ sample = $sample; report = $base; hasQuery = $hasQuery; uri = $uri; deploy = ""; run = ""; log = "" }
 
     if ($hasQuery -and -not $IncludeQueryReports -and -not $DataSourceUri) {
         $row.deploy = "skipped"; $row.run = "needs-datasource"
@@ -59,13 +63,17 @@ foreach ($f in $jrxmls) {
     }
 
     # deploy (attach a data source for query-based reports when provided)
-    $args = @{ Jrxml = $f.FullName; TargetUri = $uri; Label = "$sample / $base"; Overwrite = $true }
-    if ($hasQuery -and $DataSourceUri) { $args.DataSourceUri = $DataSourceUri }
+    $deployArgs = @{ Jrxml = $f.FullName; TargetUri = $uri; Label = "$sample / $base"; Overwrite = $true
+                     ServerUrl = $jrs.ServerUrl; User = $jrs.User; Password = $jrs.Password }
+    if ($hasQuery -and $DataSourceUri) { $deployArgs.DataSourceUri = $DataSourceUri }
     try {
-        & $deploy @args *> $null
+        # capture all streams (incl. Write-Host) so a failure's reason is preserved
+        $out = & $deploy @deployArgs *>&1
         $row.deploy = "ok"
     } catch {
-        $row.deploy = "FAIL"; $row.run = "-"
+        $logFile = Join-Path $logDir "$id.log"
+        ($out, $_.Exception.Message) | Out-String | Set-Content $logFile -Encoding utf8
+        $row.deploy = "FAIL"; $row.run = "-"; $row.log = $logFile
         $results.Add([pscustomobject]$row); continue
     }
 
@@ -73,7 +81,7 @@ foreach ($f in $jrxmls) {
 
     # run to PDF
     $tmp = [IO.Path]::GetTempFileName()
-    $code = & curl.exe -s -o $tmp -w "%{http_code}" -u $cred "$server/rest_v2/reports$uri.pdf"
+    $code = & curl.exe -s -o $tmp -w "%{http_code}" -u $cred "$($jrs.ServerUrl)/rest_v2/reports$uri.pdf"
     $sig = ""
     if (Test-Path $tmp) { $sig = [IO.File]::ReadAllBytes($tmp)[0..4] -join ','; Remove-Item $tmp -ErrorAction SilentlyContinue }
     $row.run = if ($code -eq "200" -and $sig -match '^37,80,68,70') { "ok" } else { "FAIL($code)" }

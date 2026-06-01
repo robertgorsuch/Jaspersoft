@@ -73,9 +73,11 @@ def introspect(query: str, host, port, user, db) -> list:
     script = (
         "CREATE TEMP VIEW _jr_scaffold AS\n"
         f"{sql}\n;\n"
+        # scope to the temp schema so a same-named relation elsewhere can't
+        # inject duplicate columns into the field list
         r"\copy (SELECT column_name, udt_name FROM information_schema.columns "
-        "WHERE table_name = '_jr_scaffold' ORDER BY ordinal_position) "
-        "TO STDOUT WITH (FORMAT csv)\n"
+        "WHERE table_name = '_jr_scaffold' AND table_schema LIKE 'pg_temp%' "
+        "ORDER BY ordinal_position) TO STDOUT WITH (FORMAT csv)\n"
     )
     cmd = ["psql", "-h", host, "-p", str(port), "-U", user, "-d", db,
            "-v", "ON_ERROR_STOP=1", "-q", "-X", "-f", "-"]
@@ -95,16 +97,30 @@ def introspect(query: str, host, port, user, db) -> list:
 
 # --- width layout ------------------------------------------------------------
 def layout_widths(cols, total):
-    """Weighted column widths summing exactly to `total`."""
-    weights = []
-    for _name, udt in cols:
-        jc = java_class(udt)
-        weights.append(1.0 if (is_right_aligned(jc)) else 1.6)
+    """Weighted column widths that are all positive and sum to exactly `total`.
+
+    A fixed 40px minimum would overflow `total` once there are more than
+    total/40 columns, pushing the rounding remainder negative; instead the
+    minimum is capped to what actually fits, and the rounding remainder is
+    spread across columns (never dumped onto one), so no width goes <= 0.
+    """
+    n = len(cols)
+    weights = [1.0 if is_right_aligned(java_class(udt)) else 1.6 for _name, udt in cols]
     s = sum(weights)
-    raw = [max(40, int(total * w / s)) for w in weights]
-    # fix rounding so widths sum to exactly total
+    min_w = max(1, min(40, total // n))            # a floor that always fits
+    raw = [max(min_w, int(total * w / s)) for w in weights]
+
+    # nudge one px at a time (up or down) until the widths sum to exactly
+    # `total`, never letting any column drop below min_w
     diff = total - sum(raw)
-    raw[-1] += diff
+    step = 1 if diff > 0 else -1
+    i = 0
+    while diff != 0:
+        idx = i % n
+        if not (step < 0 and raw[idx] <= min_w):
+            raw[idx] += step
+            diff -= step
+        i += 1
     return raw
 
 

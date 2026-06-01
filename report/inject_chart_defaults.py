@@ -21,12 +21,28 @@ DEFAULTS = {
 }
 
 def inject(text, name, expr):
-    # only transform a self-closing <parameter name="NAME" .../> (no existing default)
-    pat = re.compile(r'<parameter name="' + re.escape(name) + r'"([^>]*?)/>')
-    repl = ('<parameter name="' + name + r'"\1>'
-            '<defaultValueExpression><![CDATA[' + expr + ']]></defaultValueExpression>'
-            '</parameter>')
-    return pat.sub(repl, text)
+    """Add a defaultValueExpression to parameter `name`, whether it is written
+    self-closing (<parameter .../>) or with child elements
+    (<parameter ...>...</parameter>). A parameter that already has a default is
+    left untouched. Uses function replacements so `expr` (which may contain
+    backslashes or digits) is never interpreted as a regex backreference."""
+    default_xml = ('<defaultValueExpression><![CDATA['
+                   + expr + ']]></defaultValueExpression>')
+
+    sc = re.compile(r'<parameter name="' + re.escape(name) + r'"([^>]*?)/>')
+    if sc.search(text):
+        return sc.sub(lambda m: '<parameter name="' + name + '"' + m.group(1)
+                      + '>' + default_xml + '</parameter>', text, count=1)
+
+    full = re.compile(r'(<parameter name="' + re.escape(name)
+                      + r'"[^>]*>)(.*?)(</parameter>)', re.DOTALL)
+
+    def repl(m):
+        if '<defaultValueExpression>' in m.group(2):
+            return m.group(0)          # already has a default; leave it
+        return m.group(1) + default_xml + m.group(2) + m.group(3)
+
+    return full.sub(repl, text, count=1)
 
 n = 0
 for path in glob.glob(os.path.join(SRC, "*.jrxml")):

@@ -40,35 +40,17 @@ param(
     [string]$Database = "postgis_34_sample",
     [string]$DbUser = "postgres",
     [string]$DbPassword = "postgres",
+    [switch]$Overwrite,
     [string]$ServerUrl,
     [string]$User,
     [string]$Password
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_jrs_common.ps1")
 
-# --- resolve config (shared convention with deploy_report.ps1) -----------
-$cfgPath = Join-Path $PSScriptRoot "..\jrs.config.json"
-$cfg = $null
-if (Test-Path $cfgPath) { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json }
-
-function Resolve-Setting($param, $envName, $cfgProp) {
-    if (![string]::IsNullOrEmpty($param)) { return $param }
-    if ($envName) {
-        $envVal = [Environment]::GetEnvironmentVariable($envName)
-        if (![string]::IsNullOrEmpty($envVal)) { return $envVal }
-    }
-    if ($cfg -and $cfg.PSObject.Properties.Name -contains $cfgProp) { return $cfg.$cfgProp }
-    return $null
-}
-
-$ServerUrl = Resolve-Setting $ServerUrl "JRS_URL"  "serverUrl"
-$User      = Resolve-Setting $User      "JRS_USER" "user"
-$Password  = Resolve-Setting $Password  "JRS_PASS" "password"
-
-if (-not $ServerUrl) { throw "No server URL. Set -ServerUrl, `$env:JRS_URL, or serverUrl in jrs.config.json" }
-if (-not $User -or -not $Password) { throw "No credentials. Set -User/-Password, env vars, or jrs.config.json" }
-$ServerUrl = $ServerUrl.TrimEnd("/")
+# --- resolve config (param -> env -> jrs.config.json, validated) ----------
+$jrs = Resolve-JrsConfig -ServerUrl $ServerUrl -User $User -Password $Password
 if (-not $Uri.StartsWith("/")) { $Uri = "/$Uri" }
 if (-not $Label) { $Label = ($Uri -split "/")[-1] }
 if (-not $ConnectionUrl) { $ConnectionUrl = "jdbc:postgresql://${DbHost}:${DbPort}/${Database}" }
@@ -82,32 +64,38 @@ $desc = [ordered]@{
     username      = $DbUser
     password      = $DbPassword
 }
-$jsonFile = [IO.Path]::GetTempFileName()
-($desc | ConvertTo-Json -Depth 4) | Set-Content -Path $jsonFile -Encoding utf8
+# --- optional overwrite: update the datasource IN PLACE -------------------
+# A datasource referenced by reports can't be deleted (403), and a plain re-PUT
+# hits JRS optimistic locking (409 "versions not match"). So fetch the current
+# version and send it in the descriptor to update in place.
+if ($Overwrite) {
+    $cur = & curl.exe -s -w "`n%{http_code}" -u "$($jrs.User):$($jrs.Password)" `
+        -H "Accept: application/json" "$($jrs.ServerUrl)/rest_v2/resources$Uri"
+    $cl = $cur -split "`n"
+    if ($cl[-1].Trim() -match '^2\d\d$') {
+        try {
+            $desc.version = (($cl[0..($cl.Length - 2)] -join "`n") | ConvertFrom-Json).version
+            Write-Host "overwrite: updating existing $Uri (version $($desc.version))"
+        } catch { }
+    }
+}
 
 # --- PUT to REST v2 ------------------------------------------------------
-$url = "$ServerUrl/rest_v2/resources$Uri" + "?createFolders=true"
-Write-Host "PUT $url  (driver=$DriverClass)"
+$jsonFile = [IO.Path]::GetTempFileName()
+($desc | ConvertTo-Json -Depth 4) | Set-Content -Path $jsonFile -Encoding utf8
+Write-Host "(driver=$DriverClass)"
 try {
-    $resp = & curl.exe -s -S -w "`n%{http_code}" -u "${User}:${Password}" `
-        -X PUT `
-        -H "Content-Type: application/repository.jdbcDataSource+json" `
-        -H "Accept: application/json" `
-        --data-binary "@$jsonFile" `
-        $url
+    $r = Invoke-JrsPut -Jrs $jrs -Uri $Uri `
+        -ContentType "application/repository.jdbcDataSource+json" -JsonFile $jsonFile
 } finally {
     Remove-Item $jsonFile -ErrorAction SilentlyContinue
 }
 
-$lines = $resp -split "`n"
-$httpCode = $lines[-1].Trim()
-$body = ($lines[0..($lines.Length - 2)] -join "`n").Trim()
-
-if ($httpCode -match '^2\d\d$') {
-    Write-Host "OK ($httpCode): datasource $Uri"
-    if ($body) { Write-Host $body }
+if ($r.Code -match '^2\d\d$') {
+    Write-Host "OK ($($r.Code)): datasource $Uri"
+    if ($r.Body) { Write-Host $r.Body }
 } else {
-    Write-Host "FAILED ($httpCode)"
-    if ($body) { Write-Host $body }
-    throw "datasource create failed with HTTP $httpCode"
+    Write-Host "FAILED ($($r.Code))"
+    if ($r.Body) { Write-Host $r.Body }
+    throw "datasource create failed with HTTP $($r.Code)"
 }

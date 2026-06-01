@@ -22,12 +22,9 @@ param(
     [string]$ServerUrl, [string]$User, [string]$Password
 )
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_jrs_common.ps1")
 if (-not (Test-Path $File)) { throw "file not found: $File" }
-$cfgPath = Join-Path $PSScriptRoot "..\jrs.config.json"
-$cfg = if (Test-Path $cfgPath) { Get-Content $cfgPath -Raw | ConvertFrom-Json } else { $null }
-function Resolve-Cfg($p,$e,$c){ if($p){return $p}; $v=[Environment]::GetEnvironmentVariable($e); if($v){return $v}; if($cfg -and ($cfg.PSObject.Properties.Name -contains $c)){return $cfg.$c}; return $null }
-$ServerUrl = (Resolve-Cfg $ServerUrl "JRS_URL" "serverUrl").TrimEnd("/")
-$User = Resolve-Cfg $User "JRS_USER" "user"; $Password = Resolve-Cfg $Password "JRS_PASS" "password"
+$jrs = Resolve-JrsConfig -ServerUrl $ServerUrl -User $User -Password $Password
 if (-not $Uri.StartsWith("/")) { $Uri = "/$Uri" }
 if (-not $Label) { $Label = ($Uri -split "/")[-1] }
 
@@ -35,17 +32,13 @@ $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $File)))
 $desc = [ordered]@{ label = $Label; type = $Type; content = $b64 }
 $json = [IO.Path]::GetTempFileName()
 ($desc | ConvertTo-Json) | Set-Content $json -Encoding utf8
-if ($Overwrite) {
-    $dc = & curl.exe -s -o "$env:TEMP\jrs_del.tmp" -w "%{http_code}" -u "${User}:${Password}" -X DELETE "$ServerUrl/rest_v2/resources$Uri"
-    Write-Host "overwrite: DELETE $Uri -> $dc"
-}
-$url = "$ServerUrl/rest_v2/resources$Uri" + "?createFolders=true"
-Write-Host "PUT $url (file type=$Type)"
 try {
-    $resp = & curl.exe -s -S -w "`n%{http_code}" -u "${User}:${Password}" -X PUT `
-        -H "Content-Type: application/repository.file+json" -H "Accept: application/json" `
-        --data-binary "@$json" $url
+    if ($Overwrite) {
+        $dc = Invoke-JrsDelete -Jrs $jrs -Uri $Uri
+        Write-Host "overwrite: DELETE $Uri -> $dc"
+        if ($dc -notmatch '^(2\d\d|404)$') { throw "overwrite: DELETE $Uri returned $dc; aborting before PUT" }
+    }
+    $r = Invoke-JrsPut -Jrs $jrs -Uri $Uri -ContentType "application/repository.file+json" -JsonFile $json
 } finally { Remove-Item $json -ErrorAction SilentlyContinue }
-$lines = $resp -split "`n"; $code = $lines[-1].Trim()
-if ($code -match '^2\d\d$') { Write-Host "OK ($code): file $Uri" }
-else { Write-Host ($lines[0..($lines.Length-2)] -join "`n"); throw "upload failed HTTP $code" }
+if ($r.Code -match '^2\d\d$') { Write-Host "OK ($($r.Code)): file $Uri" }
+else { Write-Host $r.Body; throw "upload failed HTTP $($r.Code)" }

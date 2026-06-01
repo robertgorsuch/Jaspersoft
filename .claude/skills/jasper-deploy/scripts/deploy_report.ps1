@@ -47,31 +47,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_jrs_common.ps1")
 
 if (-not (Test-Path $Jrxml)) { throw "jrxml not found: $Jrxml" }
 $jrxmlFull = (Resolve-Path $Jrxml).Path
 
-# --- resolve config -------------------------------------------------------
-$cfgPath = Join-Path $PSScriptRoot "..\jrs.config.json"
-$cfg = $null
-if (Test-Path $cfgPath) { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json }
-
-function Resolve-Setting($param, $envName, $cfgProp) {
-    if (![string]::IsNullOrEmpty($param)) { return $param }
-    $envVal = [Environment]::GetEnvironmentVariable($envName)
-    if (![string]::IsNullOrEmpty($envVal)) { return $envVal }
-    if ($cfg -and $cfg.PSObject.Properties.Name -contains $cfgProp) { return $cfg.$cfgProp }
-    return $null
-}
-
-$ServerUrl = Resolve-Setting $ServerUrl "JRS_URL"  "serverUrl"
-$User      = Resolve-Setting $User      "JRS_USER" "user"
-$Password  = Resolve-Setting $Password  "JRS_PASS" "password"
-if (-not $DataSourceUri) { $DataSourceUri = Resolve-Setting $null $null "dataSourceUri" }
-
-if (-not $ServerUrl) { throw "No server URL. Set -ServerUrl, `$env:JRS_URL, or serverUrl in jrs.config.json" }
-if (-not $User -or -not $Password) { throw "No credentials. Set -User/-Password, `$env:JRS_USER/JRS_PASS, or user/password in jrs.config.json" }
-$ServerUrl = $ServerUrl.TrimEnd("/")
+# --- resolve config (param -> env -> jrs.config.json, validated) ----------
+$jrs = Resolve-JrsConfig -ServerUrl $ServerUrl -User $User -Password $Password
+if (-not $DataSourceUri) { $DataSourceUri = $jrs.DataSourceUri }
 if (-not $TargetUri.StartsWith("/")) { $TargetUri = "/$TargetUri" }
 if (-not $Label) { $Label = [System.IO.Path]::GetFileNameWithoutExtension($jrxmlFull) }
 
@@ -112,41 +95,34 @@ if ($ResourceFiles) {
     $desc.resources = [ordered]@{ resource = $list }
 }
 
-$jsonFile = [IO.Path]::GetTempFileName()
-($desc | ConvertTo-Json -Depth 8) | Set-Content -Path $jsonFile -Encoding utf8
-
 # --- optional overwrite: delete existing resource first ------------------
 # JRS uses optimistic locking; re-PUTting over an existing report unit fails
-# with 409 "versions not match". -Overwrite deletes it first (ignores 404).
+# with 409 "versions not match". -Overwrite deletes it first. A delete that
+# fails for any reason other than 404 (e.g. 403) is fatal, so we don't mask it
+# as a misleading 409 on the PUT.
 if ($Overwrite) {
-    $delUrl = "$ServerUrl/rest_v2/resources$TargetUri"
-    $delCode = & curl.exe -s -o $null -w "%{http_code}" -u "${User}:${Password}" -X DELETE $delUrl
+    $delCode = Invoke-JrsDelete -Jrs $jrs -Uri $TargetUri
     Write-Host "overwrite: DELETE $TargetUri -> $delCode"
+    if ($delCode -notmatch '^(2\d\d|404)$') {
+        throw "overwrite: DELETE $TargetUri returned $delCode; aborting before PUT"
+    }
 }
 
 # --- PUT to REST v2 -------------------------------------------------------
-$url = "$ServerUrl/rest_v2/resources$TargetUri" + "?createFolders=true"
-Write-Host "PUT $url"
+$jsonFile = [IO.Path]::GetTempFileName()
+($desc | ConvertTo-Json -Depth 8) | Set-Content -Path $jsonFile -Encoding utf8
 try {
-    $resp = & curl.exe -s -S -w "`n%{http_code}" -u "${User}:${Password}" `
-        -X PUT `
-        -H "Content-Type: application/repository.reportUnit+json" `
-        -H "Accept: application/json" `
-        --data-binary "@$jsonFile" `
-        $url
+    $r = Invoke-JrsPut -Jrs $jrs -Uri $TargetUri `
+        -ContentType "application/repository.reportUnit+json" -JsonFile $jsonFile
 } finally {
     Remove-Item $jsonFile -ErrorAction SilentlyContinue
 }
 
-$lines = $resp -split "`n"
-$httpCode = $lines[-1].Trim()
-$body = ($lines[0..($lines.Length - 2)] -join "`n").Trim()
-
-if ($httpCode -match '^2\d\d$') {
-    Write-Host "OK ($httpCode): deployed $TargetUri"
-    if ($body) { Write-Host $body }
+if ($r.Code -match '^2\d\d$') {
+    Write-Host "OK ($($r.Code)): deployed $TargetUri"
+    if ($r.Body) { Write-Host $r.Body }
 } else {
-    Write-Host "FAILED ($httpCode)"
-    if ($body) { Write-Host $body }
-    throw "deploy failed with HTTP $httpCode"
+    Write-Host "FAILED ($($r.Code))"
+    if ($r.Body) { Write-Host $r.Body }
+    throw "deploy failed with HTTP $($r.Code)"
 }

@@ -1,6 +1,7 @@
 # Compiled / generated artifacts (regenerable)
 *.class
 *.jasper
+__pycache__/
 
 # Microsoft Office owner-lock temp files (created while a doc is open)
 ~$*
