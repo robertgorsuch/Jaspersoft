@@ -197,6 +197,18 @@ at fill time; **skip local compile**, deploy and run.
 | HTML5 charts (HighCharts) | `<hc:chart xmlns:hc="http://jaspersoft.com/highcharts" type="Column\|StackedBar\|…">` with `<hc:chartSetting>` + `<multiAxisData>` (`dataAxis` row buckets + `multiAxisMeasure`) | `metro_population_html5.jrxml` |
 | FusionMaps choropleth | `<fm:map xmlns:fm="http://jaspersoft.com/fusion">` with `<fm:mapNameExpression>`, `<fm:colorRange>`s, `<fm:mapDataset><fm:entity>` (idExpression + valueExpression) | `tx_county_density_map.jrxml` |
 
+**Gotcha:** a chart/map component bound to the main dataset and placed in a
+band that fills *before* row iteration (e.g. `title`) must set
+**`evaluationTime="Report"`**, or it binds zero data and renders blank/uniform
+(no error). Put it in `summary`, or keep it in `title` with that attribute.
+
+**Preview a Pro report as an image** (no local renderer for Pro components — use
+the server's PDF and rasterize it): run to PDF, then
+```bash
+python -m pip install pypdfium2 Pillow   # one-time
+python -c "import pypdfium2 as p; p.PdfDocument(r'out.pdf')[0].render(scale=3).to_pil().save(r'out.png')"
+```
+
 FusionMaps geometry lives in `…\jasperserver-pro\fusion\maps\fusioncharts.*.js`.
 The installed **`Texas`** map (`fusioncharts.texas.js`) is keyed by **county FIPS**
 (no zero-padding), so bind `idExpression` to `(countyfp::int)::text` — no lookup

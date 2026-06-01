@@ -31,7 +31,8 @@
 			<componentElement>
 				<reportElement x="0" y="46" width="802" height="490" uuid="c1d2e3f4-0010-0002-0003-000000000004"/>
 				<fm:map xmlns:fm="http://jaspersoft.com/fusion"
-				        xsi:schemaLocation="http://jaspersoft.com/fusion http://jaspersoft.com/schema/fusion.xsd">
+				        xsi:schemaLocation="http://jaspersoft.com/fusion http://jaspersoft.com/schema/fusion.xsd"
+				        evaluationTime="Report">
 					<fm:mapNameExpression><![CDATA["Texas"]]></fm:mapNameExpression>
 					<fm:mapProperty name="includeNameInLabels">
 						<fm:propertyExpression><![CDATA[Boolean.FALSE]]></fm:propertyExpression>
