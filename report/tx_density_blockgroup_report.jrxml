@@ -17,15 +17,18 @@
 
 	<queryString language="SQL">
 		<![CDATA[
-WITH bgpop AS (
-  SELECT b.geoid, b.statefp, b.countyfp, b.aland, COALESCE(a.pop,0) AS pop
-  FROM tiger_data.tx_bg b
-  LEFT JOIN (
-    SELECT statefp||countyfp||tractce||left(blockce,1) AS bg, sum(pop) AS pop
-    FROM tiger_data.tx_tabblock20 GROUP BY 1
-  ) a ON a.bg = b.geoid
-),
-classed AS (
+SELECT
+  COALESCE(c.name,'(unknown)')                            AS county,
+  l.geoid                                                 AS block_group,
+  l.pop::bigint                                           AS population,
+  l.area_km2                                              AS area_km2,
+  round(l.dens::numeric,1)                                AS density,
+  l.density_class                                         AS density_class,
+  count(*)   over (partition by l.density_class)::int     AS class_bg_count,
+  sum(l.pop) over (partition by l.density_class)::bigint  AS class_pop,
+  round((100.0 * sum(l.pop) over (partition by l.density_class)
+        / NULLIF(sum(l.pop) over (),0))::numeric,1)        AS class_pct
+FROM (
   SELECT geoid, statefp, countyfp, pop,
          round((aland/1e6)::numeric,3) AS area_km2,
          CASE WHEN aland>0 THEN pop/(aland/1e6) ELSE 0 END AS dens,
@@ -40,20 +43,15 @@ classed AS (
            WHEN pop/(aland/1e6) < 8000 THEN '7. 4,000 - 8,000'
            ELSE '8. 8,000+'
          END AS density_class
-  FROM bgpop
-)
-SELECT
-  COALESCE(c.name,'(unknown)')                            AS county,
-  l.geoid                                                 AS block_group,
-  l.pop::bigint                                           AS population,
-  l.area_km2                                              AS area_km2,
-  round(l.dens::numeric,1)                                AS density,
-  l.density_class                                         AS density_class,
-  count(*)   over (partition by l.density_class)::int     AS class_bg_count,
-  sum(l.pop) over (partition by l.density_class)::bigint  AS class_pop,
-  round((100.0 * sum(l.pop) over (partition by l.density_class)
-        / NULLIF(sum(l.pop) over (),0))::numeric,1)        AS class_pct
-FROM classed l
+  FROM (
+    SELECT b.geoid, b.statefp, b.countyfp, b.aland, COALESCE(a.pop,0) AS pop
+    FROM tiger_data.tx_bg b
+    LEFT JOIN (
+      SELECT statefp||countyfp||tractce||left(blockce,1) AS bg, sum(pop) AS pop
+      FROM tiger_data.tx_tabblock20 GROUP BY 1
+    ) a ON a.bg = b.geoid
+  ) bgpop
+) l
 LEFT JOIN tiger.county c ON c.statefp=l.statefp AND c.countyfp=l.countyfp
 ORDER BY l.density_class, county, l.geoid
 		]]>
