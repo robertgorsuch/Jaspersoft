@@ -4,9 +4,10 @@ description: >-
   Design, compile, and deploy JasperReports artifacts to JasperReports Server.
   Use when the user wants to scaffold a JasperReports report from a SQL query,
   generate or hand-edit a JR7 (JasperReports 7) .jrxml, compile a .jrxml to
-  .jasper, or publish/deploy a report to the Jasper(Reports) Server. Covers the
-  full design-compile-deploy pipeline against a local PostgreSQL database
-  and a JasperReports Server REST v2 endpoint.
+  .jasper, publish/deploy a report to the Jasper(Reports) Server, or export/import
+  (promote, back up, version-control) a dashboard or other repository resource.
+  Covers the full design-compile-deploy pipeline against a local PostgreSQL
+  database and a JasperReports Server REST v2 endpoint.
 ---
 
 # JasperReports design / compile / deploy
@@ -211,6 +212,49 @@ bundle embedded (`-ResourceFiles "X.properties=..."`) even with
 bundle). The single-CSV *query-executer* report (`csvdatasource`) is a harder
 case — its empty `<query language="csv">` binds 0 rows via an adapter; build that
 one in Jaspersoft Studio.
+
+## Dashboards (author in designer; promote via export/import)
+**Do NOT try to compose a dashboard from scratch via `/rest_v2/resources`.** A JRS
+dashboard (`resourceType=dashboard`) is a descriptor + three companion files
+(`components` = frames, `layout` = a 40-wide grid of `<div data-componentId .../>`,
+`wiring` = inter-frame events). You *can* PUT a hand-built model and the server
+stores it (201) — but the JRS 10 client **silently won't render it**: the viewer
+fetches the model and never executes the frames, and the **designer shows it
+empty**, even when the stored model is byte-for-byte equivalent (same keys,
+content-type `application/dashboardComponentsSchema+json`) to a working sample.
+The designer does extra work on save that a raw resource PUT doesn't reproduce
+and that isn't visible in the served model. This was investigated thoroughly and
+abandoned — frames spin forever, no console error.
+
+**Use the designer + export/import instead** (the supported path):
+1. Author the dashboard once in the **designer**, dragging in already-deployed
+   reports / ad hoc views, then Save:
+   `http://localhost:8081/jasperserver-pro/dashboard/designer.html`
+   (open an existing one at `dashboard/designer.html#<url-encoded uri>`).
+2. **Version-control / back up / promote** it with the REST v2 export+import
+   service (the archive is the designer's own output, so it re-imports and
+   renders identically — ideal for dev→prod promotion across servers):
+```powershell
+& $skill\export_resource.ps1 -Uri /reports/geocoder/sales_dashboard -Out backups\sales_dashboard.zip
+& $skill\import_resource.ps1 -Zip backups\sales_dashboard.zip      # -Update:$false to fail on existing
+```
+`export_resource.ps1`: POST `/rest_v2/export` `{uris,parameters}` → `{id}`, polls
+`/rest_v2/export/{id}/state` until `phase=finished`, downloads
+`/rest_v2/export/{id}/exportFile` (the download is **`/exportFile`** — a bare
+`GET /rest_v2/export/{id}` returns `405`). `import_resource.ps1`: POSTs the zip
+multipart to `/rest_v2/import?update=true`, polls `/rest_v2/import/{id}/state`.
+Both export folders recursively (export a folder URI to grab a whole app).
+**Verified:** round-trip export+import of the `1._Supermart_Dashboard` sample.
+
+**View a dashboard** in the HTML5 viewer (NOT a `flow.html` flow — there is no
+`dashboardRuntimeFlow`; that errors "No flow definition found"). The resource URI
+goes in the **URL-encoded hash fragment**:
+`http://localhost:8081/jasperserver-pro/dashboard/viewer.html#%2Freports%2Fgeocoder%2Fsales_dashboard`
+
+**Note on scope:** export/import promotes/versions dashboards; it does not *create*
+them from data. Authoring is the one manual, UI step. (Ad Hoc views are likewise
+web-UI-authored.) Everything else here — reports and their embedded charts — is
+fully scripted.
 
 ## Notes / gotchas
 - The live server is `jasperserver-pro` on **port 8081** (HTTP Basic). Port 8080
