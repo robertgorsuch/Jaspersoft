@@ -140,6 +140,39 @@ datasource, filled, and exported. Re-deploying an existing report fails with
 `409 versions not match` (optimistic locking) — pass **`-Overwrite`** to
 `deploy_report.ps1` to delete-then-recreate.
 
+**Other export formats** — the same synchronous endpoint just takes a different
+extension. **Verified on this server** (all `200` with real content): `.xlsx`,
+`.csv`, `.docx`, `.pptx` (also `.rtf`, `.ods`, `.odt`, `.xml`). e.g.
+`.../rest_v2/reports/reports/geocoder/county_summary.xlsx`. The magic bytes
+differ per format (`PK` for the Office/OpenDocument zip formats), so verify by
+HTTP `200` + a non-trivial byte size rather than `%PDF-`.
+
+**Big reports — async execution** (`rest_v2/reportExecutions`). The synchronous
+`/reports/{uri}.{fmt}` endpoint blocks until the fill finishes and can time out
+on large reports (the `tx_density_blockgroup_report*` reports are ~1 MB / tens of
+thousands of rows). The async service queues the fill and lets you poll. **Verified
+round-trip on this server.** NOTE: on Windows, pass the JSON body from a **file**
+(`--data "@req.json"`) — an inline `-d '{...}'` gets its quotes mangled and the
+server 400s with `serialization.error`.
+```powershell
+# 1. POST the request (body from a file to survive PowerShell/curl quoting)
+'{"reportUnitUri":"/reports/geocoder/county_summary","outputFormat":"pdf","interactive":false,"async":true}' |
+    Set-Content out\req.json -Encoding utf8
+$rid = (curl.exe -s -u "${user}:${pass}" -H "Content-Type: application/json" -H "Accept: application/json" `
+    --data "@out\req.json" "http://localhost:8081/jasperserver-pro/rest_v2/reportExecutions" | ConvertFrom-Json).requestId
+# 2. poll until ready  ->  {"value":"ready"}
+curl.exe -s -u "${user}:${pass}" -H "Accept: application/json" ".../rest_v2/reportExecutions/$rid/status"
+# 3. download the output (exportId comes from GET .../reportExecutions/$rid -> exports[0].id)
+curl.exe -s -o out.pdf -u "${user}:${pass}" ".../rest_v2/reportExecutions/$rid/exports/$exportId/outputResource"
+```
+
+**API source of truth for THIS server** — rather than the external community docs
+(which version-drift and 403 scripted fetches), the live WADL lists every
+`rest_v2` endpoint this exact 10.0.0 install exposes:
+`http://localhost:8081/jasperserver-pro/rest_v2/application.wadl?detail=true`
+(drop `?detail=true` for the core-only, shorter listing). See
+`references/jrs-rest-api.md` for a distilled, verified-vs-doc-only endpoint map.
+
 **Verify a whole folder of reports** — run each to PDF and check the HTTP code +
 `%PDF-` magic + a non-trivial byte size. (Do NOT count `/Type /Page` objects as a
 signal — the page tree is usually compressed, so the grep reads 0 on a perfectly
