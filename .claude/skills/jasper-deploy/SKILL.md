@@ -70,6 +70,25 @@ type: `line` uses `showLines/showShapes` — `showTickMarks/showTickLabels` thro
 `UnrecognizedPropertyException` on a line plot — while bar/area/stackedbar use
 `showTickMarks/showTickLabels`.)
 
+**Advanced report features** (all on `scaffold_jrxml.py`, all verified):
+- `--param NAME:TYPE[:DEFAULT]` — a report parameter used as `$P{NAME}` in the
+  query (TYPE = string|integer|long|decimal|double|boolean|date|timestamp).
+  Introspection substitutes the default literal for `$P{..}` so psql can run the
+  query; the jrxml keeps `$P{..}`. Pair with `deploy_report.ps1 -Control` for an
+  interactive prompt (below). Run-time override: `…/rpt.pdf?NAME=value`.
+- `--group-by COLUMN` — group header + a subtotal footer summing every numeric
+  column (the query should `ORDER BY COLUMN`).
+- `--highlight "COL:OP:VALUE:#COLOR"` — a `<conditionalStyle>` shading the cell
+  when the condition holds (numeric `> >= < <= == !=`; strings `== / !=`).
+- `--drill "COL:TARGET_URI[:p=COL2;..]"` — COL becomes a ReportExecution
+  hyperlink running TARGET_URI with row values as params.
+- `--crosstab ROW:COL:MEASURE` — a JR7-native pivot (rows × columns, Sum of
+  MEASURE) with row/column totals + grand total, instead of the flat table.
+- `--subreport JRXML_FILE_URI[:p=COL;..]` — embed a child report in the summary
+  band on the parent connection. The URI must point to a jrxml **file** resource
+  (e.g. `/reports/x/rpt_files/Label_main_jrxml`, or one uploaded with
+  `upload_file.ps1`) — not a reportUnit.
+
 ### 2. Compile — validate jrxml -> jasper
 `scripts/compile_jrxml.ps1` compiles against the JR7 runtime. A clean compile is
 the fastest check that the jrxml is JR7-valid before deploying.
@@ -109,6 +128,21 @@ folders. JRS compiles the jrxml server-side on first run.
 ```
 Verified working: a live deploy to this server returns `201 Created` and the
 report unit is retrievable at its URI.
+
+`deploy_report.ps1` also:
+- **`-Overwrite`** now updates **in place** via `?overwrite=true` (no delete) — so
+  it works even for a report that is a dashboard dashlet (a delete-then-create
+  would hit `403 resource.in.use`; see Dashboards).
+- **SQL lint** (on by default): blocks a query that begins with `WITH`/non-`SELECT`
+  before deploying (the JRS security validator rejects it at fill time anyway).
+  `-SkipSqlLint` overrides.
+- **`-Control "param:kind[:label[:extra]]"`** (repeatable) attaches a JRS input
+  control to the matching `$P{param}`, so the report prompts. `kind` =
+  `select`/`multiselect` (extra = `Food;Drink;…`, or `Label=value;…`) or `single`
+  (extra = `text|number|date|datetime`). Controls are created as standalone
+  repository resources under `<report>_controls/` and referenced (the verified
+  pattern — embedding controls in the report unit is rejected). Verify with
+  `GET /rest_v2/reports/{uri}/inputControls`.
 
 **Credentials** resolve in order: script params → env vars
 `JRS_URL`/`JRS_USER`/`JRS_PASS` → `jrs.config.json` in the skill root. Copy
@@ -177,6 +211,18 @@ curl.exe -s -o out.pdf -u "${user}:${pass}" ".../rest_v2/reportExecutions/$rid/e
 `http://localhost:8081/jasperserver-pro/rest_v2/application.wadl?detail=true`
 (drop `?detail=true` for the core-only, shorter listing). See
 `references/jrs-rest-api.md` for a distilled, verified-vs-doc-only endpoint map.
+
+**Verify content + visuals (not just HTTP 200).** `scripts/verify_report.ps1`
+runs a deployed report and asserts more than a `%PDF-`: the format returns
+`200` + right magic + non-trivial size; the CSV export has `>= -MinRows` data
+rows and contains every `-Contains` string; and page 1 rasterized matches a
+committed `-Baseline` PNG within `-MaxPixelDiff` (mean abs pixel diff;
+`-UpdateBaseline` / a missing baseline saves it). `-Params @{name="val"}` sets
+run params. Throws on any failed assertion.
+```powershell
+& $skill\verify_report.ps1 -Uri /reports/foodmart/foodmart_top_categories `
+    -MinRows 10 -Contains "Vegetables","Snack Foods" -Baseline baselines\top_categories.png
+```
 
 **Verify a whole folder of reports** — run each to PDF and check the HTTP code +
 `%PDF-` magic + a non-trivial byte size. (Do NOT count `/Type /Page` objects as a
@@ -296,8 +342,21 @@ the grid layout:
     "x":0,"y":0,"width":40,"height":10 }, ... ] }
 ```
 `x/y/width/height` place each tile on a 40-wide grid (omit them all and pass
-`-AutoGrid` for a two-column auto-layout). Use `-SkipVerify` to skip the
-run-to-PDF check.
+`-AutoGrid`; manifest `"cols"` sets the column count, default 2). Use
+`-SkipVerify` to skip the run-to-PDF check.
+
+**Mixed tiles.** A dashlet's `"kind"` is `report` (default), `text`, or `image`:
+- `text` — `{"kind":"text","name":"Hdr","text":"…","size":18,"bold":true,
+  "align":"center","color":"rgba(..)","background":"rgb(..)"}`
+- `image` — `{"kind":"image","name":"Logo","url":"repo:/path or http://…"}`
+
+Only report tiles are exported/referenced; text/image carry no repository
+resource. A manifest-level `"wiring":[{"producer":"A:out","consumers":["B:param"]}]`
+appends cross-dashlet (filter) wiring. **Verified:** a text+report+report+image
+dashboard composes, imports, and re-exports intact. The full model schema is in
+`references/dashboard-model.md`. (Interactive **filterGroup + inputControl** tiles
+and **ad hoc views** stay designer-authored — see that reference and the scope
+note below.)
 
 **How the compose step works (and why it renders, unlike a raw PUT).** A JRS
 dashboard is a descriptor + three companion files (`components` = the dashlet
@@ -359,9 +418,16 @@ dashboard (`resource.not.found`) → import → the full component model is rest
 intact (all frames: charts, text dashlet, filter group, input control; plus the
 embedded ad hoc views, `layout` and `wiring`). The export archive holds the
 dashboard `.xml` descriptor + `_files/{components.data,layout,wiring.data}` +
-each embedded ad hoc view. (Authoring remains the one manual, designer-only step
-— only the export/import promotion/backup half is scriptable, and that is what's
-verified here.)
+each embedded ad hoc view.
+
+**Promote dev→prod** with `scripts/promote.ps1 -Uri <uri> -ToServerUrl … -ToUser
+… -ToPassword …` — exports from the source (this skill's config by default, or
+`-From*`) and imports into the target server in one step (a folder URI promotes
+a whole app). **Teardown** a composed dashboard with
+`scripts/teardown_dashboard.ps1 -Uri <dash> [-IncludeReports] [-DryRun]` — it
+deletes the dashboard first (releasing the `resource.in.use` locks), then its
+report tiles + `<report>_controls` folders; a report still used by another
+dashboard is skipped, not half-deleted.
 
 **View a dashboard** in the HTML5 viewer (NOT a `flow.html` flow — there is no
 `dashboardRuntimeFlow`; that errors "No flow definition found"). The resource URI
@@ -378,13 +444,21 @@ their embedded charts, and report-tile dashboards — is fully scripted.
 ## Notes / gotchas
 - The live server is `jasperserver-pro` on **port 8081** (HTTP Basic). Port 8080
   hosts an unrelated Bearer-token-gated Java service that 401s every path — not JRS.
+- **Smoke test:** after editing any script, run `scripts/smoke_test.ps1`
+  (`$env:PGPASSWORD="postgres"` first) — it scaffolds → compiles → deploys (+input
+  control) → verifies content → runs to PDF → composes a dashboard (report + text
+  tile) → tears down, asserting each step under a throwaway `/reports/_smoke`.
+- **JR runtime lib dir** resolves via `-LibDir` → `$env:JR_LIB_DIR` → `jrs.config.json`
+  `jrLibDir` → the machine default; set `jrLibDir` on a fresh clone. The shared
+  `Invoke-JrCompile` helper also absorbs the harmless SLF4J-on-stderr that would
+  otherwise abort a `$ErrorActionPreference=Stop` caller.
 - **JRS SQL security validator**: report queries must begin with `SELECT`.
   A leading `WITH` (CTE) is rejected at fill time with a `JSSecurityException`
   (`Validator.validateSQL`) surfaced as a generic `400`/error UID. Window
-  functions (`... over ()`) are fine. **This is a server-side check — a clean
-  local `compile_jrxml.ps1` does NOT catch it** (the CTE is valid JR/SQL), so it
-  only shows up on run-to-PDF. Always run a CTE-using report to PDF before
-  declaring it deployed. **Fix:** push each CTE down into a nested subquery in
+  functions (`... over ()`) are fine. A clean local `compile_jrxml.ps1` does NOT
+  catch it (the CTE is valid JR/SQL) — but **`deploy_report.ps1` now lints and
+  blocks it before deploy** (and `scaffold_jrxml.py` warns); `-SkipSqlLint`
+  overrides. **Fix:** push each CTE down into a nested subquery in
   the `FROM` clause so the statement starts with `SELECT`, e.g.
   `WITH a AS (...), b AS (... FROM a) SELECT ... FROM b`
   → `SELECT ... FROM (... FROM (...) a) b`. The `tx_density_blockgroup_report*`
