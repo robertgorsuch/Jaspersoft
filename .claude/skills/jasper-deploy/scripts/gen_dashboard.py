@@ -63,56 +63,89 @@ def build_components(dashlets) -> str:
     }
     arr = [props]
     for d in dashlets:
-        cid = component_id(d["label"])
-        arr.append({
-            "type": "reportUnit", "label": d["label"], "resource": d["resource"],
-            "exposeOutputsToFilterManager": False, "dashletHyperlinkTarget": "",
-            "id": cid, "name": d["label"], "scaleToFit": "width",
-            "autoRefresh": False, "refreshInterval": 5,
-            "refreshIntervalUnit": "minute", "showTitleBar": True,
-            "showExportButton": False, "showPrintButton": False,
-            "showRefreshButton": False, "showMaximizeButton": True,
-            "showBackButton": True, "dataSourceUri": d["resource"],
-            "showVizSelectorIcon": False, "outputParameters": [],
-            "parameters": [], "showVizSelector": False,
-        })
+        cid = d["cid"]
+        kind = d.get("kind", "report")
+        if kind == "text":
+            arr.append({
+                "type": "text", "label": "Text", "id": cid, "name": cid,
+                "text": d.get("text", ""), "alignment": d.get("align", "left"),
+                "bold": bool(d.get("bold", False)), "italic": bool(d.get("italic", False)),
+                "underline": bool(d.get("underline", False)),
+                "font": d.get("font", "Arial"), "size": int(d.get("size", 12)),
+                "color": d.get("color", "rgba(0, 0, 0, 1)"),
+                "backgroundColor": d.get("background", "rgba(0, 0, 0, 0)"),
+                "scaleToFit": "height", "showDashletBorders": bool(d.get("border", False)),
+                "borderColor": "rgb(208, 208, 208)",
+                "verticalAlignment": d.get("valign", "top"),
+                "exposeOutputsToFilterManager": False, "dashletHyperlinkTarget": "",
+                "parameters": [], "toolbar": None,
+            })
+        elif kind == "image":
+            arr.append({
+                "type": "image", "label": "Image", "id": cid, "name": cid,
+                "url": d["url"], "scaleToFit": d.get("scaleToFit", "container"),
+                "showTitleBar": False, "showRefreshButton": False,
+                "showMaximizeButton": False, "showDashletBorders": bool(d.get("border", False)),
+                "borderColor": "rgba(208, 208, 208, 1)",
+                "exposeOutputsToFilterManager": False,
+                "dashletHyperlinkTarget": d.get("linkTarget", "Self"),
+                "parameters": [], "outputParameters": [],
+            })
+        else:  # report
+            arr.append({
+                "type": "reportUnit", "label": d["label"], "resource": d["resource"],
+                "exposeOutputsToFilterManager": False, "dashletHyperlinkTarget": "",
+                "id": cid, "name": d["label"], "scaleToFit": "width",
+                "autoRefresh": False, "refreshInterval": 5,
+                "refreshIntervalUnit": "minute", "showTitleBar": True,
+                "showExportButton": False, "showPrintButton": False,
+                "showRefreshButton": False, "showMaximizeButton": True,
+                "showBackButton": True, "dataSourceUri": d["resource"],
+                "showVizSelectorIcon": False, "outputParameters": [],
+                "parameters": [], "showVizSelector": False,
+            })
     return json.dumps(arr, separators=(",", ":"))
 
 
 def build_layout(dashlets) -> str:
-    divs = []
-    for d in dashlets:
-        cid = component_id(d["label"])
-        divs.append(
-            f"<div data-componentId='{cid}' data-x='{d['x']}' data-y='{d['y']}' "
-            f"data-width='{d['width']}' data-height='{d['height']}'></div>"
-        )
-    return "".join(divs)
+    return "".join(
+        f"<div data-componentId='{d['cid']}' data-x='{d['x']}' data-y='{d['y']}' "
+        f"data-width='{d['width']}' data-height='{d['height']}'></div>"
+        for d in dashlets)
 
 
-def build_wiring(dashlets) -> str:
+def build_wiring(dashlets, extra=None) -> str:
     def event(name):
         return {
             "name": name, "producer": f"DashboardProperties:{name}",
             "component": "DashboardProperties",
-            "consumers": [{"consumer": f"{component_id(d['label'])}:"
+            "consumers": [{"consumer": f"{d['cid']}:"
                            + ("@refresh" if name == "@init" else "@applyParams")}
                           for d in dashlets],
         }
-    return json.dumps([event("@init"), event("@applyParams")],
-                      separators=(",", ":"))
+    events = [event("@init"), event("@applyParams")]
+    # optional cross-dashlet wiring passthrough: [{producer, consumers:[..]}]
+    for w in (extra or []):
+        prod = w["producer"]
+        events.append({
+            "name": prod.split(":")[-1], "producer": prod,
+            "component": prod.split(":")[0],
+            "consumers": [{"consumer": c} for c in w.get("consumers", [])],
+        })
+    return json.dumps(events, separators=(",", ":"))
 
 
 # --- archive descriptors -----------------------------------------------------
 def build_descriptor(folder, name, label, dashlets, ts) -> str:
     files_folder = f"{folder}/{name}_files"
+    report_dashlets = [d for d in dashlets if d.get("kind", "report") == "report"]
     rds = "".join(
         f"    <resourceDescriptor>\n        <type>reportUnit</type>\n"
         f"        <id>{d['resource']}</id>\n    </resourceDescriptor>\n"
-        for d in dashlets)
+        for d in report_dashlets)
     res_uris = "".join(
         f"    <resource>\n        <uri>{d['resource']}</uri>\n    </resource>\n"
-        for d in dashlets)
+        for d in report_dashlets)
 
     def local(data_file, rname, ftype, xsitype, ver):
         return (
@@ -200,7 +233,7 @@ def main():
     ap.add_argument("--manifest", required=True, help="dashboard manifest JSON")
     ap.add_argument("--out", required=True, help="output .zip path")
     ap.add_argument("--auto-grid", action="store_true",
-                    help="compute x/y/width/height for any dashlet missing them (2 columns)")
+                    help="compute x/y/width/height for any dashlet missing them")
     args = ap.parse_args()
 
     with open(args.manifest, encoding="utf-8-sig") as f:  # tolerate a UTF-8 BOM
@@ -213,23 +246,43 @@ def main():
         sys.stderr.write("ERROR: manifest has no dashlets\n")
         sys.exit(2)
 
-    # normalize: a dashlet may be specified as {resource,label} (compose-only)
-    # or as {name,title} (the unified build+compose manifest) -- derive the
-    # repository URI and display label from name/title + the dashboard folder.
-    for d in dashlets:
-        d.setdefault("resource", f"{folder}/{d['name']}" if "name" in d else None)
-        if not d.get("resource"):
-            sys.stderr.write(f"ERROR: dashlet needs 'resource' or 'name': {d}\n")
-            sys.exit(2)
-        d.setdefault("label", d.get("title") or d["resource"].rsplit("/", 1)[-1])
+    # normalize each dashlet: kind (report|text|image), a stable component id,
+    # and -- for report tiles -- the repository URI + display label. report
+    # dashlets may be given as {resource,label} or {name,title}; text/image
+    # tiles need no resource.
+    used_ids = set()
+    for i, d in enumerate(dashlets):
+        kind = d.setdefault("kind", "report")
+        if kind == "report":
+            d.setdefault("resource", f"{folder}/{d['name']}" if "name" in d else None)
+            if not d.get("resource"):
+                sys.stderr.write(f"ERROR: report dashlet needs 'resource' or 'name': {d}\n")
+                sys.exit(2)
+            d.setdefault("label", d.get("title") or d["resource"].rsplit("/", 1)[-1])
+        else:
+            if kind == "image" and not d.get("url"):
+                sys.stderr.write(f"ERROR: image dashlet needs 'url': {d}\n"); sys.exit(2)
+            d.setdefault("label", d.get("name") or kind.capitalize())
+        cid = d.get("id") or component_id(d.get("label") or kind)
+        while cid in used_ids:                      # ensure uniqueness
+            cid = f"{cid}_{i}"
+        used_ids.add(cid)
+        d["cid"] = cid
 
     if args.auto_grid:
-        # two-column 40-wide grid; each tile 20 wide, 10 tall, stacked
+        # pack into `cols` columns (default 2) across the 40-wide grid; text/image
+        # tiles default shorter than report tiles, and stack row by row.
+        cols = int(m.get("cols", 2))
+        cw = max(1, 40 // cols)
+        col_y = [0] * cols
         for i, d in enumerate(dashlets):
-            d.setdefault("width", 20)
-            d.setdefault("height", 10)
-            d.setdefault("x", 20 if i % 2 else 0)
-            d.setdefault("y", (i // 2) * 10)
+            defh = 4 if d["kind"] == "text" else (8 if d["kind"] == "image" else 10)
+            d.setdefault("width", cw)
+            d.setdefault("height", defh)
+            c = i % cols
+            d.setdefault("x", c * cw)
+            d.setdefault("y", col_y[c])
+            col_y[c] = d["y"] + d["height"]
     missing = [d.get("label", "?") for d in dashlets
                if any(k not in d for k in ("x", "y", "width", "height"))]
     if missing:
@@ -245,7 +298,7 @@ def main():
         f"{base}.xml": build_descriptor(folder, name, label, dashlets, ts),
         f"{files_base}/components.data": build_components(dashlets),
         f"{files_base}/layout": build_layout(dashlets),
-        f"{files_base}/wiring.data": build_wiring(dashlets),
+        f"{files_base}/wiring.data": build_wiring(dashlets, m.get("wiring")),
     }
     # the folder chain that holds the dashboard must be described or the import
     # broker silently no-ops (reports referenced by URI are resolved in the repo)
@@ -259,8 +312,9 @@ def main():
 
     print(f"OK: wrote {args.out} ({len(dashlets)} dashlets) for {folder}/{name}")
     for d in dashlets:
+        tgt = d.get("resource") or d.get("url") or f"({d['kind']})"
         print(f"    [{d['x']:>2},{d['y']:>2} {d['width']}x{d['height']}] "
-              f"{component_id(d['label']):<40} {d['resource']}")
+              f"{d['cid']:<40} {tgt}")
 
 
 if __name__ == "__main__":

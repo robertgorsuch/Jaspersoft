@@ -64,9 +64,11 @@ $m = (Get-Content $Manifest -Raw) -replace "^\xEF\xBB\xBF", "" | ConvertFrom-Jso
 $folder = $m.folder.TrimEnd("/")
 $name   = $m.name
 $dashUri = "$folder/$name"
-$reportUris = @($m.dashlets | ForEach-Object {
-    if ($_.resource) { $_.resource } else { "$folder/$($_.name)" } } | Select-Object -Unique)
-if (-not $reportUris) { throw "manifest has no dashlets" }
+# only report tiles need exporting (text/image tiles carry no repository report)
+$reportUris = @($m.dashlets | Where-Object { -not $_.kind -or $_.kind -eq "report" } |
+    ForEach-Object { if ($_.resource) { $_.resource } else { "$folder/$($_.name)" } } |
+    Select-Object -Unique)
+if (-not $reportUris) { throw "manifest has no report dashlets to export" }
 Write-Host "composing dashboard $dashUri from $($reportUris.Count) dashlet(s)"
 
 # fresh workspace
