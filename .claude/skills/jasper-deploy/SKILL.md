@@ -338,7 +338,8 @@ fully scripted.
   distilled, verified endpoint map with `docs/` page cites; it now also covers the
   `options` (saved input-control sets, verified), `queryExecutor` (Domain-only),
   `alerts`, and richer `reportExecutions` services, non-JDBC datasource types, and
-  a Visualize.js embedding pointer.
+  a **verified** Visualize.js cross-origin embedding recipe (serve the page
+  outside the webapp; `domainWhitelist` controls CORS).
 - In PowerShell, pass Maven/Java `-D...` args after `--%` if you script the
   underlying tools directly.
 - Field `class` must match the JDBC column type or fill fails — the scaffolder

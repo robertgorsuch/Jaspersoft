@@ -237,14 +237,43 @@ runs to a byte-identical PDF.
 
 ---
 
-### Embedding — Visualize.js  (`docs/JasperReportsServerVisualize.jsGuide…pdf`)
+### Embedding — Visualize.js  **[verified]**  (`docs/JasperReportsServerVisualize.jsGuide…pdf`)
 Not a REST flow but the natural "what next" for deployed reports/dashboards: a
-JS API to embed them in a web app. `visualize({server,auth},function(v){ v.report({
-resource:"/reports/geocoder/county_summary", container:"#r" }) })`; also
-`v.dashboard(…)`, `v.inputControls(…)`, `v.resourcesSearch(…)`. JRS ≥7.9 can
-auto-generate the embed code from the repository UI. Page must be served over
-HTTP (the iframes won't load from a `file://`). Out of scope for authoring, but
-worth knowing the deployed artifacts are directly embeddable.
+JS API to embed them in a web app. **Verified end-to-end** — `county_summary`
+rendered into a `<div>` on a page served from a *different* origin (`:8000`),
+authenticated cross-origin, success callback fired (driven headless via
+Playwright + the installed Chrome; screenshot confirmed the interactive table).
+Working page (served from any plain web server, NOT the JRS webapp):
+```html
+<script src="http://localhost:8081/jasperserver-pro/client/visualize.js"></script>
+<div id="container"></div>
+<script>
+visualize({ server:"http://localhost:8081/jasperserver-pro",
+            auth:{ name:"superuser", password:"superuser" } }, function(v){
+  v.report({ resource:"/reports/geocoder/county_summary", container:"#container",
+             success:function(){/*…*/}, error:function(e){/*…*/} });
+});
+</script>
+```
+Also `v.dashboard(…)`, `v.inputControls(…)`, `v.resourcesSearch(…)`. JRS ≥7.9
+auto-generates this embed code from the repository UI.
+**Gotchas found while verifying:**
+- **Serve the embed page from OUTSIDE the JRS webapp.** Everything under
+  `…/jasperserver-pro/` is behind the auth filter, so a page dropped in the webapp
+  just 302-redirects to the login screen before your JS runs. Serve it from a
+  separate origin (a plain `python -m http.server`) and let the `auth` block log
+  in cross-origin.
+- **`/client/visualize.js` loads anonymously (`200`, ~126 KB)** — but sending it
+  HTTP **Basic** creds makes the form-auth filter `302` it; just request it with
+  no `Authorization` header.
+- **Cross-origin needs CORS**, controlled by the server `domainWhitelist`
+  attribute (it's `*` here → `Access-Control-Allow-Origin: <your origin>` comes
+  back; tighten it for production).
+- **Headless capture:** Chrome `--screenshot --virtual-time-budget` fires before
+  the async fill finishes (you get visualize's own "Loading…"). Use Playwright
+  (`channel="chrome"`, no chromium download) and `wait_for_function` on a
+  success flag, then screenshot.
+Out of scope for *authoring*, but the deployed artifacts are directly embeddable.
 
 ### Deliberately out of scope
 Users/roles/organizations admin, domains/semantic layer (incl. `queryExecutor`,
