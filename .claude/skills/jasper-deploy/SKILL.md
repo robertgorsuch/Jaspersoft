@@ -331,6 +331,14 @@ fully scripted.
   output must be identical).
 - See **## Visualization components** below for charts, spider charts,
   barcodes/QR (community, local) and HTML5/FusionMaps (Pro, server-rendered).
+- The full JRS 10.0.0 PDF docs are in `docs/` (machine-local, **gitignored** like
+  the `jasperreports-lib` jars — authoritative offline source, the community site
+  403s scripted fetches; read PDFs with `pypdfium2`, not the Read tool, since
+  `pdftoppm` is unavailable). `references/jrs-rest-api.md` is the
+  distilled, verified endpoint map with `docs/` page cites; it now also covers the
+  `options` (saved input-control sets, verified), `queryExecutor` (Domain-only),
+  `alerts`, and richer `reportExecutions` services, non-JDBC datasource types, and
+  a Visualize.js embedding pointer.
 - In PowerShell, pass Maven/Java `-D...` args after `--%` if you script the
   underlying tools directly.
 - Field `class` must match the JDBC column type or fill fails — the scaffolder

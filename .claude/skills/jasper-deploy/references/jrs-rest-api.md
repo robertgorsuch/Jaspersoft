@@ -11,7 +11,21 @@ report-design/deploy/run workflow this skill automates. Each entry is tagged:
 **Source of truth for this exact install:** the live WADL —
 `http://localhost:8081/jasperserver-pro/rest_v2/application.wadl?detail=true`
 (it never version-drifts the way the external community docs do, and the docs
-site 403s scripted fetches anyway). Official reference:
+site 403s scripted fetches anyway).
+
+**Authoritative offline docs (preferred over the community URL, which 403s
+scripted fetches):** the full JRS 10.0.0 PDF set lives in `docs/` — machine-local
+and **gitignored** (~62 MB, freely re-downloadable from Jaspersoft), like the
+`jasperreports-lib` jars. The key one is
+`docs/JasperReportsServerRESTAPIReferencev10.0.0.pdf` (344 pp) —
+extract text with `pypdfium2` (`pdftoppm` isn't available, so the Read tool can't
+rasterize it). Page map for the services below: resource descriptors p.44–63,
+`resources` p.64, `permissions` p.99, `export` p.108 / `import` p.115,
+`reports` p.131, `reportExecutions` p.137, `inputControls` p.161, `options`
+p.188, `jobs` p.193, `alerts` p.235, `queryExecutor` p.294, `caches` p.298,
+`organizations`/`users`/`roles` p.299–323, `attributes` p.325. Other relevant
+guides in `docs/`: Visualize.js (embedding), Ultimate, User, Domains, Auth
+Cookbook. Online mirror:
 <https://community.jaspersoft.com/documentation/jasperreports-server/tibco-jasperreports-server-rest-api-reference/v1000/jasperreports-server-rest-api-reference-_-overview/>
 
 All paths below are under `…/jasperserver-pro/rest_v2/`. Auth is HTTP Basic on
@@ -32,6 +46,12 @@ The backbone the skill scripts already use.
 - `GET  /resources{uri}` — fetch a resource descriptor (e.g. to read a deployed
   report's `jrxmlFileReference`, then `GET` that file URI to recover the jrxml —
   this is how the `uspopulation_tibcomaps` sample was pulled back out).
+- **Datasource descriptor types** (ref p.46–51) — `create_datasource.ps1` only
+  emits `jdbcDataSource`, but the resources service also takes
+  `jndiJdbcDataSource`, `awsDataSource`, `virtualDataSource` (Teiid join over
+  several DSs), `beanDataSource`, and `customDataSource`, each with its own
+  `application/repository.<type>+json` content type and fields. Use these for a
+  non-PostgreSQL/JDBC backend; the JDBC path is the one verified here.
 
 ## reports — synchronous run  **[verified]**
 - `GET /reports{uri}.{fmt}` — fill + export in one blocking call.
@@ -55,6 +75,44 @@ Proper path for large/slow fills that can time out on the synchronous endpoint.
    the bytes. `exportId` is `exports[0].id` from step 1 (or re-`GET
    /reportExecutions/{requestId}`).
 - Add more formats to one execution: `POST /reportExecutions/{requestId}/exports`.
+- **More capabilities (doc-only, ref p.137–160):** export an already-run
+  execution asynchronously, `POST /reportExecutions/{id}/parameters` to re-fill
+  with changed input-control values, `…/{id}/exports/{exportId}/outputResource`
+  + `…/attachments/…`, page status (`…/{id}/status?page=N`), bookmarks
+  (`…/{id}/exports/{exportId}/bookmarks`), and raw parameter values.
+
+## options — saved input-control value sets  **[verified]** (create→list→update→delete)
+Report options are named sets of input-control values saved beside a report
+(ref p.188); pair with the `inputControls` service. Verified on
+`county_summary_param` (the `minEdges` control):
+- `POST /reports{uri}/options?label=NAME` body `{"<controlId>":["<value>"], …}`
+  (full literal URL — the inline `?label=` triggers the curl `000` quirk) →
+  `200` `{uri,id,label}`; the option lands as a sibling resource
+  (`/reports/geocoder/<NAME>`).
+- `GET  /reports{uri}/options` → `{reportOptionsSummary:[{uri,id,label}]}`
+  (`"No options found …"` when none).
+- `PUT  /reports{uri}/options/{id}` body `{"<controlId>":[…]}` — update values.
+- `DELETE /reports{uri}/options/{id}` — remove.
+
+## queryExecutor — run a Domain query for raw data  **[verified, Domain-only]**
+Returns query results without building a report — **but the only resource it
+supports is a Domain** (ref p.294), so it's outside this skill's JDBC-report
+scope (Domains are web-UI/semantic-layer authored). Verified the service
+executes and returns the documented shape: `POST /queryExecutor{domainUri}`
+(`Content-Type: application/xml`) with a `<query><queryFields><queryField
+id="JoinTree.table.col"/>…</queryFields><queryFilterString>…</queryFilterString></query>`
+→ `200` `{"names":[…],"values":[[…],…]}` (rows as bare value arrays). Field ids
+come from the Domain schema via the **metadata** service:
+`GET /domains{domainUri}/metadata` → `rootLevel.items[].properties.resourceId`.
+A populated result needs a Domain whose backing datasource is live — the audit
+domains were empty here and the sample foodmart Domain `400`s ("Review the Domain
+settings", its DB isn't connected on this box).
+
+## alerts — data-threshold notifications  **[doc-only]** (ref p.235)
+The data-driven sibling of `jobs`: fire when a report value crosses a threshold.
+`GET/POST/PUT/DELETE /alerts` (and `/alerts/{id}`, batch via `?id=…&id=…`,
+`/alerts/pause|resume|restart`). Descriptor mirrors a job (`source`, trigger)
+plus an `alertDataPoint` (the watched value + condition) and email output.
 
 ## jobs — scheduling  **[verified]** (full create→list→get→delete round-trip)
 Recurring / triggered / emailed report delivery.
@@ -179,7 +237,18 @@ runs to a byte-identical PDF.
 
 ---
 
+### Embedding — Visualize.js  (`docs/JasperReportsServerVisualize.jsGuide…pdf`)
+Not a REST flow but the natural "what next" for deployed reports/dashboards: a
+JS API to embed them in a web app. `visualize({server,auth},function(v){ v.report({
+resource:"/reports/geocoder/county_summary", container:"#r" }) })`; also
+`v.dashboard(…)`, `v.inputControls(…)`, `v.resourcesSearch(…)`. JRS ≥7.9 can
+auto-generate the embed code from the repository UI. Page must be served over
+HTTP (the iframes won't load from a `file://`). Out of scope for authoring, but
+worth knowing the deployed artifacts are directly embeddable.
+
 ### Deliberately out of scope
-Users/roles/organizations admin, domains/semantic layer, Ad Hoc / OLAP,
-themes, diagnostics — present in the API but outside this skill's
-geocoder-reporting remit. Discover them via the WADL if ever needed.
+Users/roles/organizations admin, domains/semantic layer (incl. `queryExecutor`,
+above), Ad Hoc / OLAP, themes, diagnostics, install/upgrade/security/telemetry —
+present in the API and in the `docs/` PDFs, but outside this skill's
+geocoder-reporting remit. Discover them via the WADL or the `docs/` guides if
+ever needed.

@@ -11,6 +11,12 @@ output/
 
 # Report-verification PDFs (re-run reports to regenerate)
 out_verify/
+out/
+
+# Vendor docs: full JasperReports Server 10.0.0 PDF set (~62 MB, machine-local,
+# freely re-downloadable from Jaspersoft). Referenced by the jasper-deploy skill
+# but kept out of the repo like the jasperreports-lib jars.
+docs/
 
 # Notes:
 #  - JasperReports runtime (C:\Users\rgorsuch\jasperreports-lib) and source
