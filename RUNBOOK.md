@@ -125,3 +125,67 @@ Self-contained HTML (Leaflet + CDN). Open directly in a browser.
 SELECT g.rating, ST_X(g.geomout) lon, ST_Y(g.geomout) lat, pprint_addy(g.addy)
 FROM geocode('901 Bagby St, Houston, TX 77002', 1) AS g;
 ```
+
+## 9. JasperReports Server automation — the `jasper-deploy` skill
+
+`.claude/skills/jasper-deploy/` scripts the full JasperReports lifecycle against a local
+**JasperReports Server 10** over REST v2. Everything is **JR 7.0.6-native**. `SKILL.md` is the
+authoritative reference; `references/` holds the distilled JR7 schema, the verified JRS REST API map,
+and the reverse-engineered dashboard model.
+
+**Server / toolchain**
+- JRS PRO at **`http://localhost:8081/jasperserver-pro`** (HTTP Basic, `superuser`/`superuser`).
+  Port **8080** is an unrelated Bearer-gated service — not JRS.
+- JR 7.0.6 runtime jars at `C:\Users\rgorsuch\jasperreports-lib\` (resolved via `-LibDir` →
+  `$env:JR_LIB_DIR` → `jrs.config.json` `jrLibDir` → that default).
+- Credentials/URL resolve: script params → env `JRS_URL`/`JRS_USER`/`JRS_PASS` → `jrs.config.json`
+  (gitignored; copy `jrs.config.example.json`).
+
+**Scripts (`scripts\`)**
+
+| Script | Purpose |
+|--------|---------|
+| `scaffold_jrxml.py` | Introspect a SQL query → emit a JR7 tabular report. Flags: `--chart`/`--chart-label-rotation`, `--param`, `--group-by`, `--highlight`, `--drill`, `--crosstab`, `--subreport`. |
+| `compile_jrxml.ps1` | Compile `.jrxml` → `.jasper` (fast JR7 validity check; via shared `Invoke-JrCompile`). |
+| `create_datasource.ps1` | Create/update a JDBC datasource (`-Overwrite` updates in place). |
+| `deploy_report.ps1` | PUT a report unit. `-Overwrite` updates in place (works for in-use reports); SQL-lint guard; `-Control "param:kind[:label[:extra]]"` attaches input controls. |
+| `verify_report.ps1` (+ `pdf_verify.py`) | Run a deployed report and assert HTTP + CSV row-count/contains + a visual baseline diff. |
+| `build_dashlets.ps1` | Manifest-driven: scaffold→compile→deploy→verify each dashlet; `-Compose` then builds the dashboard. |
+| `gen_dashboard.py` / `compose_dashboard.ps1` | Synthesize a dashboard (report/text/image tiles, auto-grid, wiring) and import it so it renders. |
+| `export_resource.ps1` / `import_resource.ps1` | Export/import any resource (back up, version, restore). |
+| `promote.ps1` | Export from a source server, import into a target — dev→prod promotion. |
+| `teardown_dashboard.ps1` | Delete a dashboard then (optionally) its report tiles + `_controls`, in lock-safe order. |
+| `smoke_test.ps1` | End-to-end regression gate (scaffold→…→compose→teardown under `/reports/_smoke`). |
+| `upload_file.ps1`, `deploy_jr_samples.ps1`, `_jrs_common.ps1` | File upload, bulk sample deploy, shared helpers. |
+
+**Quick start**
+```powershell
+$skill = ".\.claude\skills\jasper-deploy\scripts"; $env:PGPASSWORD = "postgres"
+# build + deploy + verify all dashlets, then compose the dashboard:
+& $skill\build_dashlets.ps1 -Manifest report\foodmart\dashboard.json -Compose
+# regression gate after editing any script:
+& $skill\smoke_test.ps1
+```
+
+**GOTCHAS (skill-specific)**
+1. **JRS SQL security validator**: report queries must begin with `SELECT`. A leading `WITH` (CTE)
+   compiles locally but is rejected at fill time (`JSSecurityException` → generic `400`). `deploy_report.ps1`
+   now lints+blocks this before deploy (`-SkipSqlLint` to override); fix by pushing each CTE into a `FROM`
+   subquery. Window functions (`... over ()`) are fine.
+2. **Dashboards: import, don't PUT.** A hand-built dashboard model PUT to `/rest_v2/resources` stores
+   (201) but renders **blank**. `compose_dashboard.ps1` instead exports the real dashlets, injects the
+   synthesized model, and **imports** (re-zipped with forward-slash entries — the Java importer ignores
+   back-slash paths). See `references/dashboard-model.md`.
+3. **`resource.in.use` (403)**: a report that is a dashlet of a dashboard is modification/delete-locked.
+   `deploy_report.ps1` updates in place to dodge it; `build_dashlets.ps1` reports such reports as
+   "in-use (kept)"; `teardown_dashboard.ps1` deletes the dashboard first to release the lock.
+4. **Input controls** must be standalone repository resources referenced by the report (embedding is
+   rejected); the control's name must equal the `$P{param}` it drives.
+5. **Subreport** `--subreport` must reference a jrxml **file** resource (e.g. `…/rpt_files/Label_main_jrxml`),
+   not a report unit.
+6. **Designer-only**: interactive filter groups / input-control dashboard tiles and **ad hoc views** can't
+   be synthesized (they need designer temp resources / a Domain semantic layer) — author them in the web
+   UI and promote with `export`/`import`/`promote.ps1`.
+7. **JR7 line plot**: use `showLines`/`showShapes`, not `showTickMarks`/`showTickLabels` (the scaffolder
+   handles this). The harmless SLF4J "no providers" line goes to stderr and can abort a
+   `$ErrorActionPreference=Stop` wrapper — `Invoke-JrCompile` absorbs it.
