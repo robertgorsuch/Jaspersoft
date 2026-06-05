@@ -329,10 +329,49 @@ def highlight_condition(col: str, jclass: str, op: str, value: str) -> str:
     return ("!(" + eq + ")") if op in ("!=", "<>") else eq
 
 
+def build_crosstab(row_col, col_col, meas_col, jclass, *, width, y=10):
+    """JR7-native <crosstab>: rows=row_col, columns=col_col, Sum(meas_col),
+    with row/column totals and a grand total. Returns (lines, height)."""
+    rg, cg, mn = "row_" + safe_name(row_col), "col_" + safe_name(col_col), "m_" + safe_name(meas_col)
+    mcls = jclass.get(meas_col, "java.math.BigDecimal")
+    mpat = display_pattern(mcls) or "#,##0"
+    rowHW, cellW, ch, chh = 130, 90, 18, 20
+    height = chh + ch * 2 + 4
+
+    def cell(extra, bg):
+        bgattr = f' mode="Opaque" backcolor="{bg}"' if bg else ' mode="Transparent"'
+        return (f'\t\t\t<cell width="{cellW}" height="{ch}"{extra}><contents{bgattr}>'
+                f'<element kind="textField" x="0" y="0" width="{cellW}" height="{ch}" fontSize="8.0" '
+                f'hTextAlign="Right" vTextAlign="Middle" pattern="{mpat}">'
+                f'<expression><![CDATA[$V{{{mn}}}]]></expression></element>'
+                f'<box><pen lineWidth="0.5" lineColor="#CCCCCC"/></box></contents></cell>')
+
+    o = [f'\t\t<element kind="crosstab" x="0" y="{y}" width="{width}" height="{height}">',
+         '\t\t\t<dataset/>',
+         f'\t\t\t<rowGroup name="{rg}" totalPosition="End" width="{rowHW}">',
+         f'\t\t\t\t<bucket class="{jclass.get(row_col, "java.lang.String")}"><expression><![CDATA[$F{{{row_col}}}]]></expression></bucket>',
+         f'\t\t\t\t<header><element kind="textField" x="2" y="0" width="{rowHW - 4}" height="{ch}" fontSize="8.0" bold="true" vTextAlign="Middle"><expression><![CDATA[$V{{{rg}}}]]></expression></element></header>',
+         f'\t\t\t\t<totalHeader><element kind="staticText" x="2" y="0" width="{rowHW - 4}" height="{ch}" fontSize="8.0" bold="true" vTextAlign="Middle"><text><![CDATA[Total]]></text></element></totalHeader>',
+         '\t\t\t</rowGroup>',
+         f'\t\t\t<columnGroup name="{cg}" totalPosition="End" height="{chh}">',
+         f'\t\t\t\t<bucket class="{jclass.get(col_col, "java.lang.String")}"><expression><![CDATA[$F{{{col_col}}}]]></expression></bucket>',
+         f'\t\t\t\t<header><element kind="textField" x="0" y="0" width="{cellW}" height="{chh}" fontSize="8.0" bold="true" hTextAlign="Center" vTextAlign="Middle"><expression><![CDATA[$V{{{cg}}}]]></expression></element></header>',
+         f'\t\t\t\t<totalHeader><element kind="staticText" x="0" y="0" width="{cellW}" height="{chh}" fontSize="8.0" bold="true" hTextAlign="Center" vTextAlign="Middle"><text><![CDATA[Total]]></text></element></totalHeader>',
+         '\t\t\t</columnGroup>',
+         f'\t\t\t<measure name="{mn}" calculation="Sum" class="{mcls}"><expression><![CDATA[$F{{{meas_col}}}]]></expression></measure>',
+         cell('', None),
+         cell(f' rowTotalGroup="{rg}"', "#EAF2F8"),
+         cell(f' columnTotalGroup="{cg}"', "#EAF2F8"),
+         cell(f' rowTotalGroup="{rg}" columnTotalGroup="{cg}"', "#D4E6F1"),
+         '\t\t</element>']
+    return o, height
+
+
 def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
                 margin=20, chart=None, chart_cat=None, chart_val=None,
                 chart_series=None, chart_height=300, chart_label_rotation=0,
-                params=None, group_by=None, drills=None, highlights=None):
+                params=None, group_by=None, drills=None, highlights=None,
+                crosstab=None, subreport=None):
     col_w = page_w - 2 * margin
     widths = layout_widths(cols, col_w)
     xs = []
@@ -439,6 +478,18 @@ def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
     out.append('\t</title>')
     out.append('')
 
+    # crosstab mode: emit the crosstab in the summary band and skip the tabular
+    # columnHeader/detail and any chart.
+    if crosstab:
+        ct_lines, ct_h = build_crosstab(crosstab[0], crosstab[1], crosstab[2],
+                                        col_jclass, width=col_w, y=10)
+        out.append(f'\t<summary height="{ct_h + 20}">')
+        out.extend(ct_lines)
+        out.append('\t</summary>')
+        out.append('')
+        out.append('</jasperReport>')
+        return "\n".join(out) + "\n"
+
     # column header
     out.append('\t<columnHeader height="18">')
     out.append(f'\t\t<element kind="rectangle" x="0" y="0" width="{col_w}" '
@@ -508,12 +559,28 @@ def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
     out.append('\t</pageFooter>')
     out.append('')
 
-    # optional chart in the summary band
+    # summary band: optional chart and/or subreport
+    summary = []
+    sy = 10
     if chart:
-        out.append(f'\t<summary height="{chart_height + 20}">')
-        out.extend(build_chart(chart, chart_cat, chart_val, chart_series,
-                               width=col_w, y=10, height=chart_height,
-                               label_rotation=chart_label_rotation))
+        summary.extend(build_chart(chart, chart_cat, chart_val, chart_series,
+                                   width=col_w, y=sy, height=chart_height,
+                                   label_rotation=chart_label_rotation))
+        sy += chart_height + 12
+    if subreport:
+        sub_uri, sub_params = subreport
+        expr = ('"repo:' + sub_uri + '"') if sub_uri.startswith("/") else f'"{sub_uri}"'
+        summary.append(f'\t\t<element kind="subreport" x="0" y="{sy}" width="{col_w}" '
+                       'height="20" removeLineWhenBlank="true">')
+        summary.append('\t\t\t<connectionExpression><![CDATA[$P{REPORT_CONNECTION}]]></connectionExpression>')
+        summary.append(f'\t\t\t<expression><![CDATA[{expr}]]></expression>')
+        for pn, sc in sub_params:
+            summary.append(f'\t\t\t<parameter name="{pn}"><expression><![CDATA[$F{{{sc}}}]]></expression></parameter>')
+        summary.append('\t\t</element>')
+        sy += 320
+    if summary:
+        out.append(f'\t<summary height="{sy}">')
+        out.extend(summary)
         out.append('\t</summary>')
         out.append('')
 
@@ -562,7 +629,35 @@ def main():
     ap.add_argument("--highlight", action="append", default=[], metavar="COL:OP:VALUE:#COLOR",
                     help="conditionally shade a cell when COL OP VALUE holds; OP in "
                          "> >= < <= == != (string columns: == / !=). Repeatable.")
+    ap.add_argument("--crosstab", metavar="ROW:COL:MEASURE",
+                    help="render a pivot crosstab (rows=ROW, columns=COL, Sum of "
+                         "MEASURE) with row/column totals instead of the flat table.")
+    ap.add_argument("--subreport", metavar="JRXML_FILE_URI[:p=COL;..]",
+                    help="embed a child report as a subreport in the summary band. "
+                         "JRXML_FILE_URI must point to a jrxml FILE resource (not a "
+                         "reportUnit) -- e.g. a report unit's main jrxml at "
+                         "/reports/x/rpt_files/Label_main_jrxml, or a jrxml uploaded "
+                         "with upload_file.ps1. Runs on the parent connection; "
+                         "p=COL passes a field value as parameter p.")
     args = ap.parse_args()
+
+    subreport = None
+    if args.subreport:
+        sp = args.subreport.split(":", 1)
+        sub_uri = sp[0]
+        sub_params = []
+        if len(sp) == 2 and sp[1]:
+            for pair in sp[1].split(";"):
+                if "=" in pair:
+                    pn, sc = pair.split("=", 1); sub_params.append((pn, sc))
+        subreport = (sub_uri, sub_params)
+
+    crosstab = None
+    if args.crosstab:
+        ct = args.crosstab.split(":")
+        if len(ct) != 3:
+            sys.stderr.write(f"ERROR: --crosstab needs ROW:COL:MEASURE, got '{args.crosstab}'\n"); sys.exit(2)
+        crosstab = (ct[0], ct[1], ct[2])
 
     params = [parse_param(s) for s in args.param]
 
@@ -622,7 +717,7 @@ def main():
                       chart_height=args.chart_height,
                       chart_label_rotation=args.chart_label_rotation,
                       params=params, group_by=args.group_by, drills=drills,
-                      highlights=highlights)
+                      highlights=highlights, crosstab=crosstab, subreport=subreport)
 
     out_path = args.out or f"{args.name}.jrxml"
     with open(out_path, "w", encoding="utf-8") as f:
