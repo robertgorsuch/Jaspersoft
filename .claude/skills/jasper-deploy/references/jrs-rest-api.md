@@ -114,11 +114,28 @@ A populated result needs a Domain whose backing datasource is live — the audit
 domains were empty here and the sample foodmart Domain `400`s ("Review the Domain
 settings", its DB isn't connected on this box).
 
-## alerts — data-threshold notifications  **[doc-only]** (ref p.235)
-The data-driven sibling of `jobs`: fire when a report value crosses a threshold.
-`GET/POST/PUT/DELETE /alerts` (and `/alerts/{id}`, batch via `?id=…&id=…`,
-`/alerts/pause|resume|restart`). Descriptor mirrors a job (`source`, trigger)
-plus an `alertDataPoint` (the watched value + condition) and email output.
+## alerts — data-threshold notifications  **[verified]** (create→list→get→delete; ref p.235)
+The data-driven sibling of `jobs`: fire when a watched report element's value
+crosses a threshold. Verified full CRUD against `county_summary`:
+- **`PUT /alerts` creates** (and `POST /alerts/{id}` *modifies* — the alerts
+  service inverts the usual REST verbs, per the ref). Like jobs, **both
+  `Content-Type` AND `Accept` = `application/alert+json`**. Returns `201` + the
+  descriptor with a numeric `id`.
+- `GET /alerts` lists; `GET /alerts/{id}` (Accept `application/alert+json`) reads
+  one; `DELETE /alerts/{id}` → `200` echoing the id; then `GET` → `resource.not.found`.
+  Batch ops: `?id=…&id=…`, `/alerts/pause|resume|restart`.
+- **Required descriptor parts** (minimum that returned `201`): `label`,
+  `trigger.simpleTrigger`, `source.reportUnitURI`, `outputFormats`,
+  **`repositoryDestination`** (omitting it `400`s
+  `error.report.alert.no.repository.output` even for an email-only alert),
+  `mailNotification.toAddresses`, and `dataPointAlert` (`name`,
+  `dataPoint.elementUUID`, `operator` =
+  equals|notEqual|less|lessOrEqual|greater|greaterOrEqual, `thresholdValue`,
+  `dataPointType:"NUMERIC"`, `resourceURI`).
+- **Not verified — actual firing:** the create accepted a *dummy* `elementUUID`
+  (it's resolved against the JasperPrint at fire time, not at create). A real
+  alert needs the UUID of a numeric text element in the report (JR7-native
+  scaffolds carry none — author/inspect the element) and working SMTP.
 
 ## jobs — scheduling  **[verified]** (full create→list→get→delete round-trip)
 Recurring / triggered / emailed report delivery.
