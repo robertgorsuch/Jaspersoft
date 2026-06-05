@@ -277,7 +277,15 @@ abandoned — frames spin forever, no console error.
 `GET /rest_v2/export/{id}` returns `405`). `import_resource.ps1`: POSTs the zip
 multipart to `/rest_v2/import?update=true`, polls `/rest_v2/import/{id}/state`.
 Both export folders recursively (export a folder URI to grab a whole app).
-**Verified:** round-trip export+import of the `1._Supermart_Dashboard` sample.
+**Verified:** round-trip export+import of the `1._Supermart_Dashboard` sample,
+and a **destructive** round-trip of `5._Top_Performers` — export → DELETE the
+dashboard (`resource.not.found`) → import → the full component model is restored
+intact (all frames: charts, text dashlet, filter group, input control; plus the
+embedded ad hoc views, `layout` and `wiring`). The export archive holds the
+dashboard `.xml` descriptor + `_files/{components.data,layout,wiring.data}` +
+each embedded ad hoc view. (Authoring remains the one manual, designer-only step
+— only the export/import promotion/backup half is scriptable, and that is what's
+verified here.)
 
 **View a dashboard** in the HTML5 viewer (NOT a `flow.html` flow — there is no
 `dashboardRuntimeFlow`; that errors "No flow definition found"). The resource URI
