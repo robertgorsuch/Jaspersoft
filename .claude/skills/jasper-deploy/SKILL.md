@@ -236,15 +236,32 @@ property (= the adapter's `repo:` URI) and remove any `dataSourceExpression`.
 Upload the CSV and the `.jrdax` with `upload_file.ps1`; deploy companion
 resources (resource bundles, images) embedded in the report unit with
 `deploy_report.ps1 -ResourceFiles "name=path"`.
-**Verified:** the `chartthemes` AllChartsReport (5 CSVs via subdataset adapters)
-renders all chart themes this way. Two gotchas that cause a silent 0-row or a
-fill error: (1) **strip the UTF-8 BOM** from the CSV — it trips the parser with
-"Misplaced quote"; (2) a report with `resourceBundle="X"` needs the `.properties`
-bundle embedded (`-ResourceFiles "X.properties=..."`) even with
+**Verified (subdataset adapters):** the `chartthemes` AllChartsReport (5 CSVs via
+subdataset adapters) renders all chart themes this way.
+**Verified (single-CSV main report, end-to-end):** `csv_metro_pop.jrxml` reads a
+7-row CSV as its **main** dataset — no JDBC datasource, no `<query>` — via a
+report-level `net.sf.jasperreports.data.adapter` property pointing at
+`metro_pop_adapter.jrdax`; fields map to columns by header
+(`useFirstRowAsHeader`), and a numeric column declared `class="java.lang.Integer"`
+is summed in a variable (the adapter does the String→Integer conversion). Flow:
+upload the CSV + `.jrdax` (`upload_file.ps1`), deploy the report **with no
+datasource** (the "won't run until a datasource is attached" warning is expected
+and wrong for adapter-backed reports), run to PDF → all rows render.
+Gotchas that cause a silent 0-row or a fill error:
+(1) **strip the UTF-8 BOM** from the CSV — it trips the parser with "Misplaced
+quote"; match `recordDelimiter` to the CSV's real line endings (`&#10;` for LF,
+`&#13;&#10;` for CRLF). (2) a report with `resourceBundle="X"` needs the
+`.properties` bundle embedded (`-ResourceFiles "X.properties=..."`) even with
 `whenResourceMissingType="Key"` (that only covers missing keys, not a missing
-bundle). The single-CSV *query-executer* report (`csvdatasource`) is a harder
-case — its empty `<query language="csv">` binds 0 rows via an adapter; build that
-one in Jaspersoft Studio.
+bundle). (3) **JR7 parses the `.jrdax` with strict Jackson** — an unknown element
+throws `UnrecognizedPropertyException` at fill time (`400`), NOT a clean compile
+error. JR6-era fields like `<useConnection>` are rejected; the only valid
+`CsvDataAdapterImpl` elements are: `name, fileName, dataFile, fieldDelimiter,
+recordDelimiter, useFirstRowAsHeader, columnNames, queryExecuterMode, datePattern,
+numberPattern, encoding, timeZone, locale`.
+The single-CSV *query-executer* report (`csvdatasource`, empty
+`<query language="csv">`) is still a harder case — build that one in Jaspersoft
+Studio — but the property-on-main-dataset form above needs no Studio.
 
 ## Dashboards (author in designer; promote via export/import)
 **Do NOT try to compose a dashboard from scratch via `/rest_v2/resources`.** A JRS

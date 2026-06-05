@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<csvDataAdapter class="net.sf.jasperreports.data.csv.CsvDataAdapterImpl">
+  <name>Metro Pop CSV</name>
+  <fileName>repo:/reports/geocoder/data/metro_pop.csv</fileName>
+  <fieldDelimiter>,</fieldDelimiter>
+  <recordDelimiter>&#10;</recordDelimiter>
+  <useFirstRowAsHeader>true</useFirstRowAsHeader>
+  <queryExecuterMode>false</queryExecuterMode>
+</csvDataAdapter>
