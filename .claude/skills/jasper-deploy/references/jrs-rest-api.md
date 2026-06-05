@@ -132,10 +132,25 @@ crosses a threshold. Verified full CRUD against `county_summary`:
   `dataPoint.elementUUID`, `operator` =
   equals|notEqual|less|lessOrEqual|greater|greaterOrEqual, `thresholdValue`,
   `dataPointType:"NUMERIC"`, `resourceURI`).
-- **Not verified — actual firing:** the create accepted a *dummy* `elementUUID`
-  (it's resolved against the JasperPrint at fire time, not at create). A real
-  alert needs the UUID of a numeric text element in the report (JR7-native
-  scaffolds carry none — author/inspect the element) and working SMTP.
+- **Firing — verified to the SMTP step.** A once-only immediate alert
+  (`simpleTrigger.startType=1, occurrenceCount=1`) on a report with a numeric
+  element fired on its Quartz trigger, ran the report, and drove the notification
+  pipeline to the mail send — log: `ReportExecutionAlerting … executeAndSendReport
+  → sendMailNotification`. The send then failed **only** because this server's
+  configured SMTP host is the placeholder `mail.example.com:25`
+  (`UnknownHostException`) — i.e., the evaluate→notify machinery works; only a
+  reachable mailserver is missing. The once-only alert self-removes after firing
+  (`GET /alerts/{id}` → `404`).
+- **Actual email delivery — not captured here** (no admin in this context). The
+  mail host is in `…/WEB-INF/js.quartz.properties`
+  (`report.scheduler.mail.sender.host/.port/.username/.password/.from`); it's
+  writable but **only reloads on a `jasperreportsTomcat` service restart**
+  (needs elevation). To capture a delivered alert: point it at a local catcher
+  (`localhost:25`), restart the service, fire the alert, observe the message.
+- JR7-native `<element …>` accepts a `uuid="…"` attribute (compiles clean); the
+  `dataPointAlert.dataPoint.elementUUID` is resolved against the JasperPrint at
+  fire time. The alerts UI captures it by click; via REST, supply the element's
+  design `uuid`.
 
 ## jobs — scheduling  **[verified]** (full create→list→get→delete round-trip)
 Recurring / triggered / emailed report delivery.
