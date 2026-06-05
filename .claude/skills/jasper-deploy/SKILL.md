@@ -330,6 +330,18 @@ render server-side on JRS Pro — the open-source lib can't compile them, so
 validate them by **deploy → run-to-PDF** (a `200` + a non-trivial PDF, and the
 `.html` export containing the component markup, confirm a render).
 
+**Verified (both tiers, end-to-end):** Community — `compile_jrxml.ps1` → `.jasper`
+then `RenderPng` → PNG for JFreeChart pie/bar (`metro_population_piechart`,
+`metro_population_bar`), spider/radar (`metro_population_spider`), and barcode4j
+QR/DataMatrix/Code128 (`barcode_demo`) — all render offline from the local jars,
+content matching the data. Pro — deploy → run-to-PDF → rasterize for HTML5
+HighCharts (`metro_population_html5`) and FusionMaps choropleth
+(`tx_county_density_map`, `tx_county_population_map`) — both render server-side
+with correct data. (RenderPng note: the SLF4J "no providers" line goes to stderr;
+under PowerShell `$ErrorActionPreference="Stop"` that can abort a wrapper script
+even on a clean exit 0 — invoke the `java` compiler/renderer directly, or check
+the `.jasper`/`.png` output rather than trusting the pipeline's error state.)
+
 ### Community (local + deploy)
 Extra jars in `C:\Users\rgorsuch\jasperreports-lib` (outside this repo — rebuild
 on a fresh clone, see below):
