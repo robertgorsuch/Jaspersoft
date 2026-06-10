@@ -6,8 +6,8 @@
 .DESCRIPTION
   Exercises, against the foodmart DB + JRS, under a throwaway -Folder:
     scaffold (chart + param + highlight) -> compile -> deploy (+ input control)
-    -> verify_report (content) -> run to PDF -> compose a dashboard (report +
-    text tile) -> teardown.
+    -> verify_report (content) -> run to PDF -> schedule_job CRUD -> manage_alert
+    CRUD -> compose a dashboard (report + text tile) -> teardown.
   Prints PASS/FAIL per step and throws if any step fails. Leaves nothing behind
   unless -KeepArtifacts.
 
@@ -72,6 +72,30 @@ GROUP BY 1 ORDER BY 2 DESC
     $pdf = "$work\smoke_rpt.pdf"
     $code = & curl.exe -s -o $pdf -w "%{http_code}" -u "$($jrs.User):$($jrs.Password)" "$($jrs.ServerUrl)/rest_v2/reports$rptUri.pdf"
     step "run-pdf" ("$code".Trim() -eq "200" -and ((Get-Content $pdf -Raw) -like "%PDF-*"))
+
+    # 5b. schedule_job CRUD round-trip on the smoke report (far-future so it
+    #     never fires before we delete it)
+    $jobOk = $false
+    try {
+        & "$skill\schedule_job.ps1" -ReportUri $rptUri -Label "smoke job" -StartDate "2099-01-01 09:00:00" @cred *>$null
+        $jid = ((& "$skill\schedule_job.ps1" -Action list -ReportUri $rptUri @cred) | ConvertFrom-Json).jobsummary.id
+        & "$skill\schedule_job.ps1" -Action delete -Id $jid @cred *>$null
+        $jobOk = $null -ne $jid
+    } catch { $jobOk = $false }
+    step "schedule-job" $jobOk
+
+    # 5c. manage_alert CRUD round-trip (placeholder element uuid -- create only
+    #     validates the descriptor shape; far-future so it doesn't self-remove)
+    $alertOk = $false
+    try {
+        & "$skill\manage_alert.ps1" -ReportUri $rptUri -Label "smoke alert" `
+            -ElementUuid "00000000-0000-0000-0000-000000000001" -Operator ">" -Threshold 1 `
+            -MailTo smoke@example.com -StartType at -StartDate "2099-01-01 09:00:00" @cred *>$null
+        $aid = ((& "$skill\manage_alert.ps1" -Action list -ReportUri $rptUri @cred) | ConvertFrom-Json).alertsummary.id
+        & "$skill\manage_alert.ps1" -Action delete -Id $aid @cred *>$null
+        $alertOk = $null -ne $aid
+    } catch { $alertOk = $false }
+    step "alert-crud" $alertOk
 
     # 6. compose a dashboard (report tile + text tile)
     $manifest = "$work\smoke_dash.json"

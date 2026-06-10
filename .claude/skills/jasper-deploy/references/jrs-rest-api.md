@@ -125,13 +125,21 @@ crosses a threshold. Verified full CRUD against `county_summary`:
   one; `DELETE /alerts/{id}` → `200` echoing the id; then `GET` → `resource.not.found`.
   Batch ops: `?id=…&id=…`, `/alerts/pause|resume|restart`.
 - **Required descriptor parts** (minimum that returned `201`): `label`,
-  `trigger.simpleTrigger`, `source.reportUnitURI`, `outputFormats`,
-  **`repositoryDestination`** (omitting it `400`s
-  `error.report.alert.no.repository.output` even for an email-only alert),
-  `mailNotification.toAddresses`, and `dataPointAlert` (`name`,
-  `dataPoint.elementUUID`, `operator` =
+  `trigger.simpleTrigger`, `source.reportUnitURI`, **`baseOutputFilename`**
+  (omitting it `400`s `error.not.empty` on that field — even for an email-only
+  alert), `outputFormats`, **`repositoryDestination`** (omitting it `400`s
+  `error.report.alert.no.repository.output`), `mailNotification` with
+  **`toAddresses` as a WRAPPER OBJECT `{"address":["a@b"]}`** — a bare array
+  `400`s `serialization.error` deserializing `ClientAddressesListWrapper` (this
+  differs from `jobs`, where recipients are a plain array), and `dataPointAlert`
+  (`name`, `dataPoint.elementUUID`, `operator` =
   equals|notEqual|less|lessOrEqual|greater|greaterOrEqual, `thresholdValue`,
   `dataPointType:"NUMERIC"`, `resourceURI`).
+- **Re-verified via `scripts/manage_alert.ps1`** (the wrapper that bakes in the
+  two shape rules above): full create→list→get→delete round-trip. NOTE the
+  **list** (collection) endpoint returns an `alertsummary` summary representation
+  under `application/json` — requesting `application/alert+json` there `406`s
+  (that media type is for the single-resource get only).
 - **Firing — verified to the SMTP step.** A once-only immediate alert
   (`simpleTrigger.startType=1, occurrenceCount=1`) on a report with a numeric
   element fired on its Quartz trigger, ran the report, and drove the notification
@@ -153,7 +161,9 @@ crosses a threshold. Verified full CRUD against `county_summary`:
   design `uuid`.
 
 ## jobs — scheduling  **[verified]** (full create→list→get→delete round-trip)
-Recurring / triggered / emailed report delivery.
+Recurring / triggered / emailed report delivery. **Wrapped by
+`scripts/schedule_job.ps1`** (create/list/get/delete; simpleTrigger now/at/
+recurring, output formats, repo destination, optional mail).
 - `PUT /jobs` — create. **Both `Content-Type` AND `Accept` must be
   `application/job+json`** — a plain `application/json` Accept gives `406 Not
   Acceptable`. Returns the created job with a numeric `id`. Minimal descriptor

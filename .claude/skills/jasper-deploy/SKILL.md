@@ -54,6 +54,15 @@ Use `--query-file q.sql` for long queries. Options: `--db --host --port --user`
 a4|letter`, `--landscape`. The scaffold is a starting point — refine layout by
 hand using `references/jr7-schema.md`, or open it in Jaspersoft Studio.
 
+Pick a **visual template** with `--template` =
+`slate|corporate|forest|minimal|dark` (default `slate`, the original look). The
+theme sets the column-header band, title/subtitle, group band, row-rule and
+footer colors; `minimal` paints no header fill (dark header text + an underline
+rule) for a clean look. **Verified:** all themes compile JR7-clean and render
+(corporate = filled deep-blue header + blue title; minimal = underline style),
+data identical across themes. To add a palette, extend the `THEMES` dict in
+`scaffold_jrxml.py`.
+
 Add a **JFreeChart chart** in the summary band with `--chart`:
 ```powershell
 python $skill\scaffold_jrxml.py --name metro_pop --chart bar `
@@ -246,6 +255,49 @@ $env:PGPASSWORD = "postgres"
 java --class-path "C:\Users\rgorsuch\jasperreports-lib\*" `
     report\RenderPng.java report\my_report.jasper out.png   # optional 3rd arg = page index
 ```
+
+### 5. (optional) Schedule a job / set a data alert
+Two thin wrappers over the verified `jobs` and `alerts` REST services (see
+`references/jrs-rest-api.md` for the underlying recipes). Both resolve
+credentials the same way as `deploy_report.ps1` and pass their JSON body from a
+file. **Verified end-to-end** (create→list→get→delete round-trips, and wired
+into `smoke_test.ps1`).
+
+**`scripts/schedule_job.ps1`** — recurring / triggered / one-off report delivery
+to the repository and/or by email:
+```powershell
+# one-off PDF saved to the repo at a future date
+& $skill\schedule_job.ps1 -ReportUri /reports/geocoder/county_summary `
+    -Label "County summary" -StartDate "2026-12-01 09:00:00"
+# every day forever, two formats, emailed
+& $skill\schedule_job.ps1 -ReportUri /reports/geocoder/county_summary `
+    -StartType now -OccurrenceCount -1 -RecurrenceInterval 1 -RecurrenceIntervalUnit DAY `
+    -OutputFormats PDF,XLSX -MailTo ops@example.com
+& $skill\schedule_job.ps1 -Action list -ReportUri /reports/geocoder/county_summary  # list/get/delete (-Id N)
+```
+`-StartType` `now|at` (default `at` if `-StartDate` given). For a recurring job
+set `-OccurrenceCount -1` plus `-RecurrenceInterval`/`-RecurrenceIntervalUnit`
+(`MINUTE|HOUR|DAY|WEEK`). `-Parameters @{p="v"}` bakes in report params.
+
+**`scripts/manage_alert.ps1`** — fire a notification when a watched numeric
+report element crosses a threshold:
+```powershell
+& $skill\manage_alert.ps1 -ReportUri /reports/geocoder/county_summary `
+    -Label "Edge count high" -ElementUuid <element-uuid> -Operator ">" `
+    -Threshold 500000 -MailTo ops@example.com
+& $skill\manage_alert.ps1 -Action list -ReportUri /reports/geocoder/county_summary  # list/get/delete (-Id N)
+```
+`-ElementUuid` is the design `uuid` of the JR7 `<element>` to watch (the alerts
+UI captures it by click; via REST you supply it — creation only validates the
+descriptor shape, not element existence, so it's resolved at fire time).
+`-Operator` accepts the JRS enums (`equals|notEqual|less|lessOrEqual|greater|
+greaterOrEqual`) or the symbols `== != < <= > >=`. Firing drives the
+evaluate→notify pipeline to the SMTP send; actual delivery needs a reachable
+mail host configured server-side (see the alerts section of the REST reference).
+**Two shape gotchas the scripts handle** (both surfaced as `400` otherwise):
+the alert's `mailNotification.toAddresses` is a wrapper object `{address:[…]}`,
+**not** a bare array (unlike jobs); and `baseOutputFilename` is required even for
+an email-only alert.
 
 ## Bulk deploy (e.g. the JR Library demo samples)
 `scripts/deploy_jr_samples.ps1` walks a folder of `.jrxml`, deploys each under
@@ -446,8 +498,9 @@ their embedded charts, and report-tile dashboards — is fully scripted.
   hosts an unrelated Bearer-token-gated Java service that 401s every path — not JRS.
 - **Smoke test:** after editing any script, run `scripts/smoke_test.ps1`
   (`$env:PGPASSWORD="postgres"` first) — it scaffolds → compiles → deploys (+input
-  control) → verifies content → runs to PDF → composes a dashboard (report + text
-  tile) → tears down, asserting each step under a throwaway `/reports/_smoke`.
+  control) → verifies content → runs to PDF → schedules a job (CRUD) → sets an
+  alert (CRUD) → composes a dashboard (report + text tile) → tears down, asserting
+  each of the 9 steps under a throwaway `/reports/_smoke`.
 - **JR runtime lib dir** resolves via `-LibDir` → `$env:JR_LIB_DIR` → `jrs.config.json`
   `jrLibDir` → the machine default; set `jrLibDir` on a fresh clone. The shared
   `Invoke-JrCompile` helper also absorbs the harmless SLF4J-on-stderr that would

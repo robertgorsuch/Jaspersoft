@@ -66,6 +66,50 @@ def label_for(col: str) -> str:
     return " ".join(w.capitalize() for w in col.replace("_", " ").split())
 
 
+# --- visual templates (color/style palettes) --------------------------------
+# Keys threaded through build_jrxml so the scaffold isn't one hardcoded look:
+#   header_bg  : column-header band fill (None = no fill -> dark text + rule)
+#   header_fg  : column-header text color
+#   title_fg   : title text color           subtitle_fg : subtitle text color
+#   group_bg   : --group-by header band fill group_fg    : group header text
+#   rule       : detail/row separator line color
+#   footer_fg  : page-footer text color      title_size  : title font size (pt)
+THEMES = {
+    # the original look (unchanged default), so existing output is byte-stable
+    "slate": {
+        "header_bg": "#34495E", "header_fg": "#FFFFFF",
+        "title_fg": "#000000", "subtitle_fg": "#666666",
+        "group_bg": "#EAF2F8", "group_fg": "#000000",
+        "rule": "#EEEEEE", "footer_fg": "#666666", "title_size": 16.0,
+    },
+    "corporate": {
+        "header_bg": "#1F4E79", "header_fg": "#FFFFFF",
+        "title_fg": "#1F4E79", "subtitle_fg": "#5B7DA6",
+        "group_bg": "#DCE6F1", "group_fg": "#1F4E79",
+        "rule": "#D6E0EF", "footer_fg": "#5B7DA6", "title_size": 17.0,
+    },
+    "forest": {
+        "header_bg": "#2E5E3A", "header_fg": "#FFFFFF",
+        "title_fg": "#1E3D26", "subtitle_fg": "#6B8E73",
+        "group_bg": "#E3EFE5", "group_fg": "#1E3D26",
+        "rule": "#D5E5D8", "footer_fg": "#6B8E73", "title_size": 16.0,
+    },
+    "minimal": {
+        "header_bg": None, "header_fg": "#222222",
+        "title_fg": "#111111", "subtitle_fg": "#888888",
+        "group_bg": "#F2F2F2", "group_fg": "#333333",
+        "rule": "#DDDDDD", "footer_fg": "#999999", "title_size": 15.0,
+    },
+    "dark": {
+        "header_bg": "#222B36", "header_fg": "#E8EDF2",
+        "title_fg": "#222B36", "subtitle_fg": "#7A8696",
+        "group_bg": "#E4E8ED", "group_fg": "#222B36",
+        "rule": "#CFD6DE", "footer_fg": "#7A8696", "title_size": 16.0,
+    },
+}
+DEFAULT_THEME = "slate"
+
+
 # --- report parameters -------------------------------------------------------
 PARAM_TYPES = {
     "string": "java.lang.String", "integer": "java.lang.Integer",
@@ -371,7 +415,8 @@ def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
                 margin=20, chart=None, chart_cat=None, chart_val=None,
                 chart_series=None, chart_height=300, chart_label_rotation=0,
                 params=None, group_by=None, drills=None, highlights=None,
-                crosstab=None, subreport=None):
+                crosstab=None, subreport=None, theme=None):
+    t = THEMES.get(theme or DEFAULT_THEME, THEMES[DEFAULT_THEME])
     col_w = page_w - 2 * margin
     widths = layout_widths(cols, col_w)
     xs = []
@@ -446,9 +491,10 @@ def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
         # header: the group key in bold on a light band
         out.append('\t\t<groupHeader><band height="18">')
         out.append(f'\t\t\t<element kind="rectangle" x="0" y="0" width="{col_w}" height="18" '
-                   'mode="Opaque" backcolor="#EAF2F8" forecolor="#EAF2F8"/>')
+                   f'mode="Opaque" backcolor="{t["group_bg"]}" forecolor="{t["group_bg"]}"/>')
         out.append(f'\t\t\t<element kind="textField" x="4" y="0" width="{col_w - 8}" height="18" '
-                   f'fontSize="9.0" bold="true" vTextAlign="Middle"><expression><![CDATA['
+                   f'fontSize="9.0" bold="true" forecolor="{t["group_fg"]}" vTextAlign="Middle">'
+                   f'<expression><![CDATA['
                    f'"{escape(label_for(group_by))}: " + $F{{{group_by}}}]]></expression></element>')
         out.append('\t\t</band></groupHeader>')
         # footer: subtotals under each numeric column
@@ -470,11 +516,11 @@ def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
     # title band
     title_h = 44 if subtitle else 28
     out.append(f'\t<title height="{title_h}">')
-    out.append(el_static(0, 0, col_w, 24, escape(title), fontsize=16.0,
-                         bold=True, valign=None))
+    out.append(el_static(0, 0, col_w, 24, escape(title), fontsize=t["title_size"],
+                         bold=True, forecolor=t["title_fg"], valign=None))
     if subtitle:
         out.append(el_static(0, 26, col_w, 14, escape(subtitle), fontsize=9.0,
-                             forecolor="#666666", valign=None))
+                             forecolor=t["subtitle_fg"], valign=None))
     out.append('\t</title>')
     out.append('')
 
@@ -490,17 +536,23 @@ def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
         out.append('</jasperReport>')
         return "\n".join(out) + "\n"
 
-    # column header
+    # column header. A filled theme paints a band rectangle; a header_bg=None
+    # theme (e.g. minimal) instead underlines the row with a rule and uses dark
+    # header text.
     out.append('\t<columnHeader height="18">')
-    out.append(f'\t\t<element kind="rectangle" x="0" y="0" width="{col_w}" '
-               'height="18" mode="Opaque" backcolor="#34495E" forecolor="#34495E"/>')
+    if t["header_bg"]:
+        out.append(f'\t\t<element kind="rectangle" x="0" y="0" width="{col_w}" '
+                   f'height="18" mode="Opaque" backcolor="{t["header_bg"]}" forecolor="{t["header_bg"]}"/>')
+    else:
+        out.append(f'\t\t<element kind="line" x="0" y="17" width="{col_w}" '
+                   f'height="1" forecolor="{t["rule"]}"/>')
     for (cname, udt), x, w in zip(cols, xs, widths):
         jc = java_class(udt)
         halign = "Right" if is_right_aligned(jc) else None
         pad = 6 if halign is None else 0
         out.append(el_static(x + pad, 0, w - pad - (6 if halign else 0), 18,
                              escape(label_for(cname)), fontsize=9.0, bold=True,
-                             forecolor="#FFFFFF", halign=halign))
+                             forecolor=t["header_fg"], halign=halign))
     out.append('\t</columnHeader>')
     out.append('')
 
@@ -539,21 +591,22 @@ def build_jrxml(name, title, subtitle, query, cols, *, page_w, page_h,
                 out.append(f'\t\t\t\t<hyperlinkParameter name="{pname}"><expression><![CDATA[$F{{{srccol}}}]]></expression></hyperlinkParameter>')
         out.append('\t\t\t</element>')
     out.append(f'\t\t\t<element kind="line" x="0" y="12" width="{col_w}" '
-               'height="1" forecolor="#EEEEEE"/>')
+               f'height="1" forecolor="{t["rule"]}"/>')
     out.append('\t\t</band>')
     out.append('\t</detail>')
     out.append('')
 
     # page footer
+    ffg = t["footer_fg"]
     out.append('\t<pageFooter height="16">')
     out.append(el_static(0, 2, col_w // 2, 12, escape(title), fontsize=8.0,
-                         forecolor="#666666", valign=None))
+                         forecolor=ffg, valign=None))
     out.append(f'\t\t<element kind="textField" x="{col_w - 155}" y="2" '
-               'width="120" height="12" forecolor="#666666" fontSize="8.0" '
+               f'width="120" height="12" forecolor="{ffg}" fontSize="8.0" '
                'hTextAlign="Right"><expression><![CDATA["Page " + $V{PAGE_NUMBER} + " of"]]>'
                '</expression></element>')
     out.append(f'\t\t<element kind="textField" x="{col_w - 33}" y="2" '
-               'width="33" height="12" forecolor="#666666" fontSize="8.0" '
+               f'width="33" height="12" forecolor="{ffg}" fontSize="8.0" '
                'evaluationTime="Report"><expression><![CDATA[" " + $V{PAGE_NUMBER}]]>'
                '</expression></element>')
     out.append('\t</pageFooter>')
@@ -606,6 +659,10 @@ def main():
     ap.add_argument("--user", default="postgres")
     ap.add_argument("--page-size", default="a4", choices=list(PAGE_SIZES))
     ap.add_argument("--landscape", action="store_true")
+    ap.add_argument("--template", default=DEFAULT_THEME, choices=list(THEMES),
+                    help=f"visual template / color palette (default: {DEFAULT_THEME}). "
+                         "Sets the column-header band, title/subtitle, group band, "
+                         "row rule and footer colors. 'minimal' uses no header fill.")
     ap.add_argument("--chart", choices=list(CHART_TYPES),
                     help="also add a JFreeChart in the summary band "
                          "(pie|pie3d|bar|bar3d|line|area|stackedbar)")
@@ -717,7 +774,8 @@ def main():
                       chart_height=args.chart_height,
                       chart_label_rotation=args.chart_label_rotation,
                       params=params, group_by=args.group_by, drills=drills,
-                      highlights=highlights, crosstab=crosstab, subreport=subreport)
+                      highlights=highlights, crosstab=crosstab, subreport=subreport,
+                      theme=args.template)
 
     out_path = args.out or f"{args.name}.jrxml"
     with open(out_path, "w", encoding="utf-8") as f:

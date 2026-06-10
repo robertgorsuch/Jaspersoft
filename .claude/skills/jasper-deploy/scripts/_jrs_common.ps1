@@ -10,6 +10,13 @@
                        the HTTP code + body.
   Invoke-JrsDelete   - DELETE a resource and return the HTTP code.
   Invoke-JrsGet      - GET a resource (Accept json) -> { Code; Body }.
+  Invoke-JrsRest     - generic call to ANY rest_v2 path (not just /resources):
+                       arbitrary method, Content-Type, Accept, optional JSON body
+                       from a file. Used by the jobs/alerts wrappers, whose
+                       services live at /rest_v2/jobs and /rest_v2/alerts with
+                       their own application/<type>+json media types and (for
+                       alerts) inverted PUT-creates / POST-modifies verbs.
+                       Returns { Code; Body }.
   Resolve-JrLib      - locate the JasperReports 7 runtime jar dir
                        (param -> env JR_LIB_DIR -> jrs.config jrLibDir -> default).
   Invoke-JrCompile   - compile a .jrxml to .jasper with CompileReport.java,
@@ -82,6 +89,33 @@ function Invoke-JrsGet {
           [string]$Accept = "application/json")
     $resp = & curl.exe -s -w "`n%{http_code}" -u "$($Jrs.User):$($Jrs.Password)" `
         -H "Accept: $Accept" "$($Jrs.ServerUrl)/rest_v2/resources$Uri"
+    $lines = $resp -split "`n"
+    $code = $lines[-1].Trim()
+    $body = if ($lines.Length -ge 2) { ($lines[0..($lines.Length - 2)] -join "`n").Trim() } else { "" }
+    return [pscustomobject]@{ Code = $code; Body = $body }
+}
+
+function Invoke-JrsRest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Jrs,                  # object from Resolve-JrsConfig
+        [Parameter(Mandatory)][string]$Method,       # GET | PUT | POST | DELETE
+        [Parameter(Mandatory)][string]$Path,         # path under ServerUrl, e.g. /rest_v2/jobs (may include ?query)
+        [string]$ContentType,                        # set for bodied requests
+        [string]$Accept = "application/json",
+        [string]$JsonFile                            # optional request-body file (survives PS->curl quoting)
+    )
+    # Build the full literal URL in one string before handing it to curl: an
+    # inline "$base?query=..." expression at the PowerShell->curl boundary can
+    # yield exit-code 000 (request never sent). Same root cause as the JSON-body
+    # quoting gotcha -- keep complex args out of the inline boundary.
+    $url = "$($Jrs.ServerUrl)$Path"
+    $cArgs = @("-s", "-S", "-w", "`n%{http_code}", "-u", "$($Jrs.User):$($Jrs.Password)",
+               "-X", $Method, "-H", "Accept: $Accept")
+    if ($ContentType) { $cArgs += @("-H", "Content-Type: $ContentType") }
+    if ($JsonFile)    { $cArgs += @("--data-binary", "@$JsonFile") }
+    $cArgs += $url
+    $resp = & curl.exe @cArgs
     $lines = $resp -split "`n"
     $code = $lines[-1].Trim()
     $body = if ($lines.Length -ge 2) { ($lines[0..($lines.Length - 2)] -join "`n").Trim() } else { "" }
